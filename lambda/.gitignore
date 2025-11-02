@@ -1,0 +1,30 @@
+# Lambda 배포 파일 (자동 생성됨)
+lambda_function.zip
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python 패키지 (requirements.txt에 명시되어 있음, 설치하면 자동 생성)
+requests/
+urllib3/
+certifi/
+charset_normalizer/
+idna/
+*.dist-info/
+
+# 시스템 파일
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE 파일
+.vscode/
+.idea/
+
+# 테스트 파일
+*.log
+
