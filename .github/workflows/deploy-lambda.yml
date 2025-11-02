@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'lambda/**'
+      - "lambda/**"
 
 jobs:
   deploy:
@@ -13,37 +13,57 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      
+          python-version: "3.11"
+
       - name: Install dependencies
         run: |
           cd lambda
           pip install -r requirements.txt -t .
-      
+
       - name: Create deployment package
         run: |
           cd lambda
           zip -r lambda_function.zip . -x "*.git*" "*.md" ".gitignore" "__pycache__/**" "*.pyc"
-      
+
+      - name: Check AWS credentials
+        id: check_credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "⚠️ AWS credentials not configured in GitHub Secrets"
+            echo "Skipping Lambda deployment..."
+            echo "skip_deployment=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ AWS credentials found"
+            echo "skip_deployment=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Configure AWS credentials
+        if: steps.check_credentials.outputs.skip_deployment == 'false'
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-2
-      
+
       - name: Update Lambda function
+        if: steps.check_credentials.outputs.skip_deployment == 'false'
         run: |
           aws lambda update-function-code \
             --function-name slackbot-chatops \
             --zip-file fileb://lambda/lambda_function.zip \
             --region ap-southeast-2
-      
-      - name: Deployment success notification
-        run: |
-          echo "✅ Lambda 함수 배포 완료!"
 
+      - name: Deployment notification
+        run: |
+          if [ "${{ steps.check_credentials.outputs.skip_deployment }}" == "true" ]; then
+            echo "⚠️ Lambda 배포 스킵됨 (AWS 자격 증명 미설정)"
+            echo "📝 GitHub Secrets에 다음을 설정하세요:"
+            echo "   - AWS_ACCESS_KEY_ID"
+            echo "   - AWS_SECRET_ACCESS_KEY"
+          else
+            echo "✅ Lambda 함수 배포 완료!"
+          fi
