@@ -369,7 +369,7 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
     logger.info(f"  - Response URL: {response_url[:50]}...")
     logger.info("=" * 80)
     
-    # /platform-deploy는 비동기 처리
+    # /platform-deploy는 비동기 처리 시도 (권한 없으면 동기 처리)
     if command == '/platform-deploy':
         # 즉시 응답 (Slack 3초 제한 회피)
         immediate_response = (
@@ -380,7 +380,7 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
             f"_잠시 후 결과를 알려드리겠습니다..._"
         )
         
-        # 자기 자신을 비동기로 재호출 (GitHub API 호출용)
+        # 자기 자신을 비동기로 재호출 시도 (GitHub API 호출용)
         async_payload = {
             'async_task': 'github_deploy',
             'command_text': command_text,
@@ -392,16 +392,17 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
         # Lambda 함수 이름 (현재 실행 중인 함수)
         function_name = context.function_name if context else os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
         
+        async_success = False
         if function_name:
-            success = invoke_async_lambda(function_name, async_payload)
-            if not success:
-                return {
-                    'ok': False,
-                    'message': '❌ 비동기 작업 시작 실패. CloudWatch Logs를 확인하세요.'
-                }
-        else:
-            # 함수 이름을 알 수 없으면 동기 처리
-            logger.warning("⚠️ Function name not found, executing synchronously")
+            async_success = invoke_async_lambda(function_name, async_payload)
+        
+        # 비동기 호출 실패 시 동기로 폴백
+        if not async_success:
+            logger.warning("⚠️ 비동기 호출 실패 또는 권한 없음, 동기 처리로 폴백")
+            logger.warning("⚠️ 주의: 3초 타임아웃 발생 가능")
+            logger.warning("⚠️ Lambda IAM Role에 lambda:InvokeFunction 권한 추가를 권장합니다")
+            
+            # 동기로 즉시 처리 (느릴 수 있음)
             trigger_github_deployment_async(command_text, user_id, channel_id, response_url)
         
         return {'ok': True, 'message': immediate_response}
