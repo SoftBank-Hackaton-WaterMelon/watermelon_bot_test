@@ -128,7 +128,7 @@ def trigger_github_deployment_from_command(command_text: str, user_id: str) -> D
     url = f'https://api.github.com/repos/{GITHUB_ID}/{GITHUB_REPO}/dispatches'
     headers = {'Accept': 'application/vnd.github.v3+json', 'Authorization': f'Bearer {GITHUB_TOKEN}'}
     payload = {
-        'event_type': 'start-deployment', # <-- (주의) GitHub Actions YML의 types와 일치시킬 것
+        'event_type': 'dev_deploy', # <-- (주의) GitHub Actions YML의 types와 일치시킬 것
         'client_payload': {'message': command_text, 'user': user_id}
     }
     try:
