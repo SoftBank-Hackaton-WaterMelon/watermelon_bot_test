@@ -66,11 +66,24 @@ jobs:
       - name: Check Slack secrets
         id: check_slack
         run: |
-          if [ -n "${{ secrets.SLACK_BOT_TOKEN }}" ] && [ -n "${{ secrets.SLACK_CHANNEL_ID }}" ]; then
-            echo "has_slack=true" >> $GITHUB_OUTPUT
-          else
+          TOKEN="${{ secrets.SLACK_BOT_TOKEN }}"
+          CHANNEL="${{ secrets.SLACK_CHANNEL_ID }}"
+          
+          if [ -z "$TOKEN" ] || [ -z "$CHANNEL" ]; then
             echo "has_slack=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Slack secrets not configured - notifications will be skipped"
+            exit 0
           fi
+          
+          # 채널 ID 형식 검증 (C, G, D로 시작해야 함)
+          if [[ ! "$CHANNEL" =~ ^[CGD][A-Z0-9]+$ ]]; then
+            echo "has_slack=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Invalid SLACK_CHANNEL_ID format - should start with C, G, or D"
+            exit 0
+          fi
+          
+          echo "has_slack=true" >> $GITHUB_OUTPUT
+          echo "✅ Slack secrets validated"
 
       - name: Notify Slack (build started)
         continue-on-error: true
@@ -198,11 +211,20 @@ jobs:
       - name: Check Slack secrets for Docker
         id: check_slack_docker
         run: |
-          if [ -n "${{ secrets.SLACK_BOT_TOKEN }}" ] && [ -n "${{ secrets.SLACK_CHANNEL_ID }}" ]; then
-            echo "has_slack=true" >> $GITHUB_OUTPUT
-          else
+          TOKEN="${{ secrets.SLACK_BOT_TOKEN }}"
+          CHANNEL="${{ secrets.SLACK_CHANNEL_ID }}"
+          
+          if [ -z "$TOKEN" ] || [ -z "$CHANNEL" ]; then
             echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          
+          if [[ ! "$CHANNEL" =~ ^[CGD][A-Z0-9]+$ ]]; then
+            echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_slack=true" >> $GITHUB_OUTPUT
 
       - name: Notify Slack (docker)
         if: always() && steps.check_slack_docker.outputs.has_slack == 'true'
@@ -296,11 +318,20 @@ jobs:
       - name: Check Slack secrets
         id: check_slack_deploy
         run: |
-          if [ -n "${{ secrets.SLACK_BOT_TOKEN }}" ] && [ -n "${{ secrets.SLACK_CHANNEL_ID }}" ]; then
-            echo "has_slack=true" >> $GITHUB_OUTPUT
-          else
+          TOKEN="${{ secrets.SLACK_BOT_TOKEN }}"
+          CHANNEL="${{ secrets.SLACK_CHANNEL_ID }}"
+          
+          if [ -z "$TOKEN" ] || [ -z "$CHANNEL" ]; then
             echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          
+          if [[ ! "$CHANNEL" =~ ^[CGD][A-Z0-9]+$ ]]; then
+            echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_slack=true" >> $GITHUB_OUTPUT
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -457,11 +488,20 @@ jobs:
       - name: Check Slack secrets
         id: check_slack_final
         run: |
-          if [ -n "${{ secrets.SLACK_BOT_TOKEN }}" ] && [ -n "${{ secrets.SLACK_CHANNEL_ID }}" ]; then
-            echo "has_slack=true" >> $GITHUB_OUTPUT
-          else
+          TOKEN="${{ secrets.SLACK_BOT_TOKEN }}"
+          CHANNEL="${{ secrets.SLACK_CHANNEL_ID }}"
+          
+          if [ -z "$TOKEN" ] || [ -z "$CHANNEL" ]; then
             echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          
+          if [[ ! "$CHANNEL" =~ ^[CGD][A-Z0-9]+$ ]]; then
+            echo "has_slack=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_slack=true" >> $GITHUB_OUTPUT
 
       - name: Send final status
         if: steps.check_slack_final.outputs.has_slack == 'true'
