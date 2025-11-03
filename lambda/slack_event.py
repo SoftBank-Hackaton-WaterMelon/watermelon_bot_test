@@ -1,6 +1,6 @@
 """
-AWS Lambda function for Slack Events API (v4 - ASYNC VERSION)
-- /platform-deploy (GitHub Trigger) - 비동기 처리
+AWS Lambda function for Slack Events API (v5 - GITHUB DISPATCH FIX)
+- /platform-deploy (GitHub Trigger) - 비동기 처리 + 디버깅 강화
 - /platform-status (ECS Read)
 - /platform-rollback (CodeDeploy Trigger)
 """
@@ -91,17 +91,23 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
     # response_url이 있으면 우선 사용 (더 빠름)
     if response_url:
         try:
-            payload = {'text': text, 'response_type': 'in_channel'}
+            payload = {
+                'text': text,
+                'response_type': 'in_channel',
+                'replace_original': False  # 기존 메시지 유지하고 새 메시지 추가
+            }
             response = requests.post(response_url, json=payload, timeout=3)
             if response.status_code == 200:
-                logger.info(f"Message sent via response_url")
+                logger.info(f"✅ Message sent via response_url")
                 return True
+            else:
+                logger.warning(f"⚠️ response_url failed: {response.status_code}")
         except Exception as e:
-            logger.warning(f"Failed to send via response_url: {e}")
+            logger.warning(f"⚠️ Failed to send via response_url: {e}")
     
     # response_url 실패 시 또는 없을 때 Bot Token 사용
-    if not SLACK_BOT_TOKEN:
-        logger.warning("SLACK_BOT_TOKEN not set")
+    if not SLACK_BOT_TOKEN or not channel:
+        logger.warning("SLACK_BOT_TOKEN or channel not set")
         return False
     
     url = 'https://slack.com/api/chat.postMessage'
@@ -115,111 +121,156 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
         response = requests.post(url, headers=headers, json=payload, timeout=3)
         result = response.json()
         if result.get('ok'):
-            logger.info(f"Message sent to {channel}")
+            logger.info(f"✅ Message sent to {channel}")
             return True
         else:
-            logger.error(f"Slack API error: {result.get('error')}")
+            logger.error(f"❌ Slack API error: {result.get('error')}")
             return False
     except Exception as e:
-        logger.exception(f"Error sending Slack message: {e}")
+        logger.exception(f"❌ Error sending Slack message: {e}")
         return False
 
 
 def trigger_github_deployment_async(command_text: str, user_id: str, channel_id: str, response_url: str):
-    """GitHub API 호출 (비동기 버전)"""
+    """GitHub API 호출 (비동기 버전) - 강화된 디버깅"""
     
+    # GitHub API URL
     url = f'https://api.github.com/repos/{GITHUB_ID}/{GITHUB_REPO}/dispatches'
     
+    # 헤더 구성
     headers = {
         'Accept': 'application/vnd.github.v3+json',
         'Authorization': f'token {GITHUB_TOKEN}',
-        'User-Agent': 'Lambda-Slack-Bot',
+        'User-Agent': 'Lambda-Slack-ChatOps',
         'Content-Type': 'application/json'
     }
     
+    # Payload 구성
     payload = {
         'event_type': 'dev_deploy',
         'client_payload': {
             'message': command_text,
             'user': user_id,
-            'timestamp': str(int(time.time()))
+            'timestamp': str(int(time.time())),
+            'source': 'slack-chatops'
         }
     }
     
     try:
-        logger.info(f"🚀 GitHub API 호출 시작")
-        logger.info(f"URL: {url}")
-        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+        logger.info("=" * 80)
+        logger.info("🚀 GitHub API 호출 시작")
+        logger.info(f"📍 URL: {url}")
+        logger.info(f"🔑 Token (first 10 chars): {GITHUB_TOKEN[:10]}...")
+        logger.info(f"📦 Payload:\n{json.dumps(payload, indent=2)}")
+        logger.info(f"📋 Headers:\n{json.dumps({k: v if k != 'Authorization' else 'token ***' for k, v in headers.items()}, indent=2)}")
+        logger.info("=" * 80)
         
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        # GitHub API 호출
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         
-        logger.info(f"GitHub API Response Code: {response.status_code}")
-        logger.info(f"GitHub API Response: {response.text}")
+        logger.info(f"📥 GitHub API Response:")
+        logger.info(f"  - Status Code: {response.status_code}")
+        logger.info(f"  - Headers: {dict(response.headers)}")
+        logger.info(f"  - Body: {response.text}")
         
-        # 성공
+        # 성공 (204 No Content)
         if response.status_code == 204:
             success_msg = (
                 f"✅ *GitHub Actions 배포 트리거 성공!*\n"
                 f"• 요청자: <@{user_id}>\n"
                 f"• 메시지: `{command_text}`\n"
-                f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`"
+                f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n"
+                f"• Event Type: `dev_deploy`\n"
+                f"• GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
+                f"  https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
-            logger.info("✅ GitHub dispatch 성공")
+            logger.info("✅✅✅ GitHub dispatch 성공!")
             send_slack_message(channel_id, success_msg, response_url)
+            return
         
-        # 인증 실패
+        # 인증 실패 (401)
         elif response.status_code == 401:
             error_msg = (
                 f"❌ *GitHub Token 인증 실패!*\n"
-                f"• `GITHUB_PERSONAL_ACCESS_TOKEN` 환경 변수를 확인하세요.\n"
-                f"• Token에 `repo`, `workflow` 권한이 있는지 확인하세요."
+                f"• Token: `{GITHUB_TOKEN[:10]}...`\n"
+                f"• Response: `{response.text}`\n\n"
+                f"*해결 방법:*\n"
+                f"1. GitHub Settings > Developer settings > Personal access tokens\n"
+                f"2. Token에 `repo` 권한이 있는지 확인\n"
+                f"3. Lambda 환경변수 `GITHUB_PERSONAL_ACCESS_TOKEN` 재확인"
             )
-            logger.error(error_msg)
+            logger.error(f"❌ 401 Unauthorized: {response.text}")
             send_slack_message(channel_id, error_msg, response_url)
+            return
         
-        # Repository 없음
+        # Repository 없음 (404)
         elif response.status_code == 404:
             error_msg = (
                 f"❌ *Repository를 찾을 수 없습니다!*\n"
                 f"• Owner: `{GITHUB_ID}`\n"
                 f"• Repo: `{GITHUB_REPO}`\n"
-                f"• Token에 해당 Repository 접근 권한이 있는지 확인하세요."
+                f"• URL: `{url}`\n"
+                f"• Response: `{response.text}`\n\n"
+                f"*해결 방법:*\n"
+                f"1. Repository 이름이 정확한지 확인\n"
+                f"2. Token에 해당 Repository 접근 권한이 있는지 확인\n"
+                f"3. Repository가 Public인지 Private인지 확인"
             )
-            logger.error(error_msg)
+            logger.error(f"❌ 404 Not Found: {response.text}")
             send_slack_message(channel_id, error_msg, response_url)
+            return
+        
+        # 권한 부족 (403)
+        elif response.status_code == 403:
+            error_msg = (
+                f"❌ *권한 부족!*\n"
+                f"• Response: `{response.text}`\n\n"
+                f"*해결 방법:*\n"
+                f"1. Token에 `workflow` scope 권한 추가 필요\n"
+                f"2. Token을 재생성하고 Lambda 환경변수 업데이트"
+            )
+            logger.error(f"❌ 403 Forbidden: {response.text}")
+            send_slack_message(channel_id, error_msg, response_url)
+            return
         
         # 기타 에러
         else:
             error_msg = (
                 f"❌ *GitHub API 오류*\n"
                 f"• Status: `{response.status_code}`\n"
-                f"• Response: `{response.text[:200]}`"
+                f"• Response: ```{response.text[:500]}```\n"
+                f"• URL: `{url}`"
             )
-            logger.error(error_msg)
+            logger.error(f"❌ Unexpected status {response.status_code}: {response.text}")
             send_slack_message(channel_id, error_msg, response_url)
+            return
             
     except requests.exceptions.Timeout:
-        error_msg = "❌ GitHub API 타임아웃 (10초 초과)"
+        error_msg = "❌ *GitHub API 타임아웃* (15초 초과)"
         logger.error(error_msg)
         send_slack_message(channel_id, error_msg, response_url)
     
     except Exception as e:
-        error_msg = f"❌ Lambda 내부 오류: {str(e)}"
-        logger.exception(error_msg)
+        error_msg = f"❌ *Lambda 내부 오류*\n```{str(e)}```"
+        logger.exception(f"💥 Exception: {e}")
         send_slack_message(channel_id, error_msg, response_url)
 
 
 def invoke_async_lambda(function_name: str, payload: Dict[str, Any]):
     """자기 자신을 비동기로 재호출"""
     try:
-        lambda_client.invoke(
+        response = lambda_client.invoke(
             FunctionName=function_name,
             InvocationType='Event',  # 비동기 호출
             Payload=json.dumps(payload)
         )
-        logger.info(f"✅ 비동기 Lambda 호출 성공: {function_name}")
+        logger.info(f"✅ 비동기 Lambda 호출 성공")
+        logger.info(f"  - Function: {function_name}")
+        logger.info(f"  - StatusCode: {response.get('StatusCode')}")
+        return True
     except Exception as e:
         logger.error(f"❌ 비동기 Lambda 호출 실패: {e}")
+        return False
 
 
 def handle_status_command() -> Dict[str, Any]:
@@ -309,12 +360,25 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
     channel_id = payload.get('channel_id', [''])[0]
     response_url = payload.get('response_url', [''])[0]
     
-    logger.info(f"📝 Command: {command}, Text: {command_text}, User: {user_id}")
+    logger.info("=" * 80)
+    logger.info(f"📝 Slash Command 수신")
+    logger.info(f"  - Command: {command}")
+    logger.info(f"  - Text: {command_text}")
+    logger.info(f"  - User: {user_id}")
+    logger.info(f"  - Channel: {channel_id}")
+    logger.info(f"  - Response URL: {response_url[:50]}...")
+    logger.info("=" * 80)
     
     # /platform-deploy는 비동기 처리
     if command == '/platform-deploy':
         # 즉시 응답 (Slack 3초 제한 회피)
-        immediate_response = f"⏳ 배포 요청을 처리 중입니다...\n• 요청자: <@{user_id}>\n• 메시지: `{command_text}`"
+        immediate_response = (
+            f"⏳ *배포 요청을 처리 중입니다...*\n"
+            f"• 요청자: <@{user_id}>\n"
+            f"• 메시지: `{command_text}`\n"
+            f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n\n"
+            f"_잠시 후 결과를 알려드리겠습니다..._"
+        )
         
         # 자기 자신을 비동기로 재호출 (GitHub API 호출용)
         async_payload = {
@@ -329,9 +393,14 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
         function_name = context.function_name if context else os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
         
         if function_name:
-            invoke_async_lambda(function_name, async_payload)
+            success = invoke_async_lambda(function_name, async_payload)
+            if not success:
+                return {
+                    'ok': False,
+                    'message': '❌ 비동기 작업 시작 실패. CloudWatch Logs를 확인하세요.'
+                }
         else:
-            # 함수 이름을 알 수 없으면 동기 처리 (느리지만 동작은 함)
+            # 함수 이름을 알 수 없으면 동기 처리
             logger.warning("⚠️ Function name not found, executing synchronously")
             trigger_github_deployment_async(command_text, user_id, channel_id, response_url)
         
@@ -351,25 +420,26 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러 - 요청 라우팅"""
     try:
-        logger.info(f"📨 Event received: {json.dumps(event, default=str)}")
+        logger.info("🎯 Lambda 실행 시작")
+        logger.info(f"📨 Event: {json.dumps(event, default=str, indent=2)}")
         
         # 비동기 작업 처리 (자기 자신이 호출한 경우)
         if 'async_task' in event:
             task_type = event['async_task']
             
             if task_type == 'github_deploy':
-                logger.info("🔄 비동기 GitHub 배포 작업 시작")
+                logger.info("🔄🔄🔄 비동기 GitHub 배포 작업 시작")
                 trigger_github_deployment_async(
                     event['command_text'],
                     event['user_id'],
                     event['channel_id'],
                     event['response_url']
                 )
-                return {'statusCode': 200, 'body': 'Async task completed'}
+                return {'statusCode': 200, 'body': json.dumps({'message': 'Async task completed'})}
             
             else:
                 logger.warning(f"⚠️ Unknown async task: {task_type}")
-                return {'statusCode': 200, 'body': 'Unknown async task'}
+                return {'statusCode': 200, 'body': json.dumps({'message': 'Unknown async task'})}
         
         # Body 디코딩
         body_str = event.get('body', '{}')
@@ -434,11 +504,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return {'statusCode': 400, 'body': json.dumps({'error': 'Invalid JSON'})}
         
         # 알 수 없는 요청
-        logger.warning(f"⚠️ 처리되지 않은 요청: {body_str[:200]}")
+        logger.warning(f"⚠️ 처리되지 않은 요청")
         return {'statusCode': 200, 'body': json.dumps({'ok': True})}
         
     except Exception as e:
-        logger.exception(f"💥 Lambda 오류: {e}")
+        logger.exception(f"💥💥💥 Lambda 오류: {e}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': 'Internal server error', 'message': str(e)})
