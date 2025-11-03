@@ -15,6 +15,7 @@ import boto3
 import datetime
 from typing import Dict, Any
 from urllib.parse import parse_qs, unquote
+from ghcr_client import get_container_images_with_tags
 
 # AWS 클라이언트 초기화
 ecs_client = boto3.client('ecs')
@@ -30,8 +31,9 @@ SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET')
 SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
 GITHUB_TOKEN = os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN')
 GITHUB_ID = os.environ.get('GITHUB_ID', 'SoftBank-Hackaton-WaterMelon')
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'watermelon_bot_test')
-
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'demo-backend')
+GHCR_MAX_IMAGES = os.environ.get('GHCR_MAX_IMAGES', '20')
+GHCR_MAX_TAGS = os.environ.get('GHCR_MAX_TAGS', '5')
 ECS_CLUSTER_NAME = os.environ.get('ECS_CLUSTER_NAME', 'atlas-cluster')
 ECS_SERVICE_NAME = os.environ.get('ECS_SERVICE_NAME', 'atlas-app-service')
 CODEDEPLOY_APP_NAME = os.environ.get('CODEDEPLOY_APP_NAME', 'atlas-codedeploy-app')
@@ -352,6 +354,84 @@ def handle_rollback_command(user_id: str) -> Dict[str, Any]:
         return {'ok': False, 'message': f'❌ 롤백 실패: {str(e)}'}
 
 
+def handle_container_list_command(channel_id: str, response_url: str) -> Dict[str, Any]:
+    """GHCR 컨테이너 이미지 목록 조회 후 Slack 전송"""
+
+    if not GITHUB_TOKEN:
+        logger.error("GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다.")
+        send_slack_message(
+            channel_id,
+            "❌ GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다.",
+            response_url,
+        )
+        return {
+            'ok': False,
+            'message': "❌ GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다."
+        }
+
+    owner_name = GITHUB_ID
+
+    ghcr_kwargs = {
+        'token': GITHUB_TOKEN,
+        'org': owner_name,
+    }
+    
+    try:
+        images_with_tags = get_container_images_with_tags(**ghcr_kwargs)
+    except ValueError as exc:
+        logger.error(f"GHCR 파라미터 오류: {exc}")
+        send_slack_message(channel_id, f"❌ GHCR 파라미터 오류: {exc}", response_url)
+        return {'ok': False, 'message': f"❌ GHCR 파라미터 오류: {exc}"}
+    except requests.RequestException as exc:
+        logger.error(f"GHCR 네트워크 오류: {exc}")
+        send_slack_message(channel_id, f"❌ GHCR 네트워크 오류: {exc}", response_url)
+        return {'ok': False, 'message': f"❌ GHCR 네트워크 오류: {exc}"}
+    except Exception as exc:
+        logger.exception(f"GHCR 조회 실패: {exc}")
+        send_slack_message(channel_id, f"❌ GHCR 조회 실패: {exc}", response_url)
+        return {'ok': False, 'message': f"❌ GHCR 조회 실패: {exc}"}
+
+    if not images_with_tags:
+        message = (
+            "ℹ️ *GHCR 컨테이너 이미지 없음*\n"
+            f"• Owner: `{owner_name}`\n"
+            "• 조회된 이미지가 없습니다."
+        )
+        send_slack_message(channel_id, message, response_url)
+        return {'ok': True, 'message': message}
+
+    max_images = int(GHCR_MAX_IMAGES)
+    max_tags = int(GHCR_MAX_TAGS)
+
+    sorted_items = sorted(images_with_tags.items())
+    lines = [
+        "📦 *GHCR 컨테이너 이미지 목록*",
+        f"• Owner: `{owner_name}`",
+        f"• 총 이미지: `{len(sorted_items)}`",
+    ]
+
+    for index, (image_name, tags) in enumerate(sorted_items):
+        if index >= max_images:
+            lines.append(
+                f"… (상위 `{max_images}`개만 표시, 총 `{len(sorted_items)}`개)"
+            )
+            break
+
+        display_tags = tags[:max_tags]
+        if display_tags:
+            tag_text = ", ".join(display_tags)
+            if len(tags) > max_tags:
+                tag_text += " …"
+        else:
+            tag_text = "태그 없음"
+
+        lines.append(f"• `{image_name}` → {tag_text}")
+
+    message = "\n".join(lines)
+    send_slack_message(channel_id, message, response_url)
+    return {'ok': True, 'message': message}
+
+
 def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Slash Command 라우터"""
     command = payload.get('command', [''])[0]
@@ -413,6 +493,9 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
     
     elif command == '/platform-rollback':
         return handle_rollback_command(user_id)
+
+    elif command == '/platform-images':
+        return handle_container_list_command(channel_id, response_url)
     
     else:
         return {'ok': False, 'message': f"❌ 알 수 없는 명령어: {command}"}
