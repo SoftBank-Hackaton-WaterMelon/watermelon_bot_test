@@ -1,5 +1,6 @@
 # Lambda 배포 파일 (자동 생성됨)
 lambda_function.zip
+lambda_function*.zip
 
 # Python 캐시
 __pycache__/
@@ -18,6 +19,8 @@ boto3/         # <--- boto3 추가
 botocore/      # <--- boto3의 의존성
 jmespath/      # <--- boto3의 의존성
 s3transfer/    # <--- boto3의 의존성
+dateutil/
+six.py
 
 # 시스템 파일
 .DS_Store
