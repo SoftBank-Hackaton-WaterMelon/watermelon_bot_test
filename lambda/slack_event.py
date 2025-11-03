@@ -176,7 +176,7 @@ def handle_rollback_command(user_id: str) -> Dict[str, Any]:
             applicationName=CODEDEPLOY_APP_NAME,
             deploymentGroupName=CODEDEPLOY_GROUP_NAME,
             includeOnlyStatuses=['Succeeded'],
-            timeRange={'start': datetime.datetime(2020, 1, 1), 'end': datetime.datetime.now(datetime.timezone.utc)} # UTC 시간 사용
+            createTimeRange={'start': datetime.datetime(2020, 1, 1), 'end': datetime.datetime.now(datetime.timezone.utc)} # UTC 시간 사용
         )
         if not response.get('deployments'):
             return {'ok': False, 'message': "❌ 에러: 롤백할 '성공한 배포' 기록이 없습니다."}
