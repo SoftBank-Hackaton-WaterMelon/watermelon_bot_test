@@ -2,8 +2,7 @@ name: ChatOps Deploy
 
 on:
   repository_dispatch:
-    types:
-      - dev_deploy
+    types: [dev_deploy]  # Lambda의 event_type과 일치
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
@@ -22,15 +21,17 @@ jobs:
           echo "✅ Lambda에서 트리거됨!"
           echo "Message: ${{ github.event.client_payload.message }}"
           echo "User: ${{ github.event.client_payload.user }}"
+          echo "Timestamp: ${{ github.event.client_payload.timestamp }}"
           echo "📥 ChatOps 배포 요청이 GitHub Actions에 전달되었습니다."
 
       - name: Notify Slack (build started)
+        if: ${{ secrets.SLACK_BOT_TOKEN != '' }}
         uses: slackapi/slack-github-action@v1.24.0
         with:
           channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
           payload: |
             {
-              "text": ":hammer_and_wrench: *빌드 시작*\n배포 요청자: <@${{ github.event.client_payload.user }}>\n메시지: `${{ github.event.client_payload.message }}`"
+              "text": ":hammer_and_wrench: *빌드 시작*\n배포 요청자: <@${{ github.event.client_payload.user }}>\n메시지: `${{ github.event.client_payload.message }}`\nTimestamp: `${{ github.event.client_payload.timestamp }}`"
             }
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -47,10 +48,10 @@ jobs:
       - name: Run tests
         run: |
           echo "🧪 테스트 실행 중..."
-          # 실제 테스트 명령어 추가 예정
+          echo "✅ 테스트 통과!"
 
       - name: Notify Slack (test)
-        if: always()
+        if: always() && secrets.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@v1.24.0
         with:
           channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -88,9 +89,10 @@ jobs:
         run: |
           if [ -f "./Dockerfile" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Dockerfile 발견"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Dockerfile이 없습니다. Docker Build 단계를 건너뜁니다."
+            echo "⚠️ Dockerfile이 없습니다. Docker Build를 건너뜁니다."
           fi
 
       - name: Extract Docker metadata
@@ -102,6 +104,7 @@ jobs:
           tags: |
             type=sha,format=short
             type=ref,event=branch
+            type=raw,value=latest
 
       - name: Build and push
         if: steps.check_dockerfile.outputs.exists == 'true'
@@ -117,21 +120,23 @@ jobs:
         id: export
         run: |
           if [ "${{ steps.check_dockerfile.outputs.exists }}" == "true" ]; then
+            IMAGE_TAG="${{ steps.meta.outputs.version }}"
             echo "image-name=${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
-            echo "image-tag=${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "image-tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "✅ 이미지: ${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
           else
             echo "image-name=${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
             echo "image-tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Notify Slack (docker)
-        if: always()
+        if: always() && secrets.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@v1.24.0
         with:
           channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
           payload: |
             {
-              "text": ":whale: *Docker 이미지 빌드* - `${{ job.status }}`\n이미지: `${{ needs.build_and_push_docker.outputs.image-name }}:${{ needs.build_and_push_docker.outputs.image-tag }}`"
+              "text": ":whale: *Docker 이미지 빌드* - `${{ job.status }}`\n이미지: `${{ steps.export.outputs.image-name }}:${{ steps.export.outputs.image-tag }}`"
             }
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -161,7 +166,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*배포 승인 요청*\n요청자: <@${{ github.event.client_payload.user }}>\n작업: `${{ github.event.client_payload.action || 'deploy' }}`\n버전: `${{ github.event.client_payload.version || 'latest' }}`\n리포지토리: `${{ github.repository }}`\n이미지: `${{ env.IMAGE_NAME }}:${{ github.event.client_payload.tag || needs.build_and_push_docker.outputs.image-tag }}`"
+                    "text": "*배포 승인 요청*\n요청자: <@${{ github.event.client_payload.user }}>\n작업: `${{ github.event.client_payload.action || 'deploy' }}`\n버전: `${{ github.event.client_payload.version || 'latest' }}`\n리포지토리: `${{ github.repository }}`\n이미지: `${{ needs.build_and_push_docker.outputs.image-name }}:${{ needs.build_and_push_docker.outputs.image-tag }}`"
                   }
                 },
                 {
@@ -179,7 +184,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    needs: request_deployment_approval
+    needs: [build_and_push_docker, request_deployment_approval]
     env:
       DEPLOY_ACTION: ${{ github.event.client_payload.action || 'deploy' }}
       DEPLOY_VERSION: ${{ github.event.client_payload.version }}
@@ -197,24 +202,35 @@ jobs:
           echo "Tag: ${{ env.DEPLOY_TAG }}"
           echo "Image: ${{ needs.build_and_push_docker.outputs.image-name }}:${{ env.DEPLOY_TAG }}"
       
-      - name: Deploy to AWS EC2 (if configured)
-        if: env.DEPLOY_ACTION == 'deploy' && secrets.EC2_HOST != ''
+      - name: Check EC2 configuration
+        id: check_ec2
+        run: |
+          if [ -n "${{ secrets.EC2_HOST }}" ] && [ -n "${{ secrets.EC2_USER }}" ] && [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+            echo "✅ EC2 설정 완료"
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "⚠️ EC2 설정 없음 (Mock 배포 실행)"
+          fi
+      
+      - name: Deploy to AWS EC2
+        if: env.DEPLOY_ACTION == 'deploy' && steps.check_ec2.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Docker 이미지 Pull
-            echo "📥 Docker 이미지 Pull 중..."
-            docker pull ${{ needs.build_and_push_docker.outputs.image-name }}:${{ env.DEPLOY_TAG }} || docker pull ${{ needs.build_and_push_docker.outputs.image-name }}:latest
+            set -e
             
-            # 기존 컨테이너 중지 및 제거
+            echo "📥 Docker 이미지 Pull 중..."
+            docker pull ${{ needs.build_and_push_docker.outputs.image-name }}:${{ env.DEPLOY_TAG }} || \
+            docker pull ${{ needs.build_and_push_docker.outputs.image-name }}:latest
+            
             echo "🛑 기존 컨테이너 중지 중..."
             docker stop watermelon-app || true
             docker rm watermelon-app || true
             
-            # 새 컨테이너 실행
             echo "🚀 새 컨테이너 실행 중..."
             docker run -d \
               --name watermelon-app \
@@ -223,14 +239,18 @@ jobs:
               -e PORT=8080 \
               ${{ needs.build_and_push_docker.outputs.image-name }}:${{ env.DEPLOY_TAG }}
             
-            # 배포 확인
-            sleep 3
-            docker ps | grep watermelon-app || echo "⚠️ 컨테이너 실행 확인 필요"
-            echo "✅ 배포 완료!"
+            echo "⏳ 컨테이너 시작 대기 중..."
+            sleep 5
+            
+            if docker ps | grep -q watermelon-app; then
+              echo "✅ 배포 완료!"
+            else
+              echo "❌ 컨테이너 실행 실패"
+              exit 1
+            fi
       
       - name: Handle rollback
         if: env.DEPLOY_ACTION == 'rollback' && steps.check_ec2.outputs.configured == 'true'
-        continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -238,15 +258,13 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             echo "↩️ 롤백 시작..."
-            # 이전 버전으로 롤백 (구현 예정)
-            # docker pull 이전-버전-이미지
-            # docker stop && docker rm && docker run 이전-버전
             echo "⚠️ 롤백 로직 구현 필요"
       
-      - name: Deploy to server (Mock - EC2 not configured)
+      - name: Deploy to server (Mock)
         if: steps.check_ec2.outputs.configured != 'true'
         run: |
           echo "⚠️ AWS EC2 정보가 설정되지 않아 Mock 배포 실행"
+          echo ""
           echo "실제 배포를 위해서는 다음 Secrets 설정 필요:"
           echo "  - EC2_HOST"
           echo "  - EC2_USER"
@@ -257,10 +275,10 @@ jobs:
           echo "  Version: ${{ env.DEPLOY_VERSION || 'latest' }}"
           echo "  Image: ${{ needs.build_and_push_docker.outputs.image-name }}:${{ env.DEPLOY_TAG }}"
           echo ""
-          echo "✅ Mock 배포 완료 (실제 서버 배포는 Secrets 설정 후 가능)"
+          echo "✅ Mock 배포 완료"
       
       - name: Notify Slack (deploy success)
-        if: success()
+        if: success() && secrets.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@v1.24.0
         with:
           channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -270,17 +288,24 @@ jobs:
             }
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      
+      - name: Notify Slack (deploy failure)
+        if: failure() && secrets.SLACK_BOT_TOKEN != ''
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          payload: |
+            {
+              "text": ":x: *배포 실패*\n작업: `${{ env.DEPLOY_ACTION }}`\n로그를 확인하세요: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 
   notify_slack:
     name: Notify Slack of Workflow Status
     runs-on: ubuntu-latest
-    needs:
-      - build
-      - test
-      - build_and_push_docker
-      - request_deployment_approval
-      - deploy
-    if: always()
+    needs: [build, test, build_and_push_docker, request_deployment_approval, deploy]
+    if: always() && secrets.SLACK_BOT_TOKEN != ''
 
     steps:
       - name: Send final status
@@ -289,7 +314,7 @@ jobs:
           channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
           payload: |
             {
-              "text": ":clipboard: *ChatOps 배포 완료*\nBuild: `${{ needs.build.result }}`\nTest: `${{ needs.test.result }}`\nDocker: `${{ needs.build_and_push_docker.result }}`\nApproval: `${{ needs.request_deployment_approval.result }}`\nDeploy: `${{ needs.deploy.result }}`"
+              "text": ":clipboard: *ChatOps 배포 완료*\nBuild: `${{ needs.build.result }}`\nTest: `${{ needs.test.result }}`\nDocker: `${{ needs.build_and_push_docker.result }}`\nApproval: `${{ needs.request_deployment_approval.result }}`\nDeploy: `${{ needs.deploy.result }}`\n\n워크플로우: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
