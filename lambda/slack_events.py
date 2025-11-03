@@ -4,13 +4,13 @@ AWS Lambda function for Slack Events API
 """
 import json
 import os
-import re
 import hmac
 import hashlib
 import time
 import logging
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+from urllib.parse import parse_qs
 
 # 로깅 설정
 logger = logging.getLogger()
@@ -113,64 +113,18 @@ def send_slack_message(channel: str, text: str) -> bool:
         return False
 
 
-def parse_deploy_command(message_text: str) -> Dict[str, Any]:
-    """
-    배포 명령어 파싱
-    지원 형식:
-    - '배포 v1.2.3' 또는 '배포 v1.2.3'
-    - '롤백'
-    - '자동 배포 시작', '배포 시작', 'deploy', '배포' (최신 버전)
-    
-    Returns:
-        dict: {'action': 'deploy'|'rollback', 'version': '1.2.3'|None}
-    """
-    text = message_text.strip()
-    
-    # 롤백 명령어 확인
-    if '롤백' in text.lower() or 'rollback' in text.lower():
-        logger.info("Rollback command detected")
-        return {'action': 'rollback', 'version': None}
-    
-    # 버전 파싱: '배포 v1.2.3' 또는 '배포 1.2.3' 형식
-    version_patterns = [
-        r'배포\s+v?(\d+\.\d+\.\d+)',  # '배포 v1.2.3' or '배포 1.2.3'
-        r'deploy\s+v?(\d+\.\d+\.\d+)',  # 'deploy v1.2.3'
-        r'v(\d+\.\d+\.\d+)',  # 단순 'v1.2.3'
-    ]
-    
-    for pattern in version_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            version = match.group(1)
-            logger.info(f"Version-specific deployment detected: v{version}")
-            return {'action': 'deploy', 'version': version}
-    
-    # 일반 배포 키워드 확인
-    deploy_keywords = ['자동 배포 시작', '배포 시작', 'deploy', '배포']
-    cleaned_text = text.lower()
-    if any(keyword.lower() in cleaned_text for keyword in deploy_keywords):
-        logger.info("Latest version deployment detected")
-        return {'action': 'deploy', 'version': None}
-    
-    # 명령어가 없음
-    return {'action': None, 'version': None}
-
-
 def trigger_github_deployment(message_text: str, user_id: str, original_message: str) -> Dict[str, Any]:
     """
     GitHub repository_dispatch 이벤트 트리거
     ChatOps: Slack 메시지 → GitHub Actions 워크플로우 실행
-    
-    지원 명령어:
-    - '배포 v1.2.3': 특정 버전 배포
-    - '롤백': 이전 버전으로 롤백
-    - '자동 배포 시작', '배포': 최신 버전 배포
     """
-    # 명령어 파싱
-    command = parse_deploy_command(message_text)
+    # 배포 키워드 감지
+    deploy_keywords = ['자동 배포 시작', '배포 시작', 'deploy', '배포']
+    cleaned_text = message_text.lower().strip()
+    is_deploy_message = any(keyword.lower() in cleaned_text for keyword in deploy_keywords)
     
-    if not command['action']:
-        logger.info(f"Message does not contain deploy keywords: {message_text}")
+    if not is_deploy_message:
+        logger.info(f"Message does not contain deploy keywords: {cleaned_text}")
         return {
             'statusCode': 200,
             'body': json.dumps({'ok': True, 'message': 'No deployment triggered'})
@@ -184,25 +138,14 @@ def trigger_github_deployment(message_text: str, user_id: str, original_message:
         'Content-Type': 'application/json',
     }
     
-    # client_payload 구성
-    client_payload = {
-        'message': message_text.lower().strip(),
-        'original_message': original_message,
-        'user': user_id,
-        'action': command['action'],  # 'deploy' or 'rollback'
-    }
-    
-    # 버전 정보 추가
-    if command['version']:
-        client_payload['version'] = command['version']
-        client_payload['tag'] = f"v{command['version']}"
-    else:
-        # 최신 버전인 경우 기본 태그 사용
-        client_payload['tag'] = f'v{os.environ.get("GITHUB_RUN_NUMBER", "latest")}'
-    
     payload = {
         'event_type': 'dev_deploy',
-        'client_payload': client_payload
+        'client_payload': {
+            'message': cleaned_text,
+            'original_message': original_message,
+            'user': user_id,
+            'tag': f'v{os.environ.get("GITHUB_RUN_NUMBER", "lambda")}'
+        }
     }
     
     try:
@@ -270,8 +213,10 @@ def handle_message_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info(f"Processing message from user {user_id} in channel {channel}: {message_text}")
     
-    # 명령어 파싱
-    command = parse_deploy_command(message_text)
+    # 배포 키워드 감지
+    deploy_keywords = ['자동 배포 시작', '배포 시작', 'deploy', '배포']
+    cleaned_text = message_text.lower().strip()
+    is_deploy_message = any(keyword.lower() in cleaned_text for keyword in deploy_keywords)
     
     # GitHub deployment 트리거
     result = trigger_github_deployment(message_text, user_id, message_text)
@@ -279,21 +224,9 @@ def handle_message_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     # GitHub 트리거 성공 시 Slack에 응답 메시지 전송
     if result.get('statusCode') == 200:
         body = json.loads(result.get('body', '{}'))
-        # 명령어가 감지되고 GitHub 트리거가 성공한 경우에만 Slack 메시지 전송
-        if body.get('ok') and command['action'] and body.get('message') != 'No deployment triggered' and channel:
-            # 메시지 구성
-            action_emoji = "↩️" if command['action'] == 'rollback' else "🚀"
-            action_text = "롤백" if command['action'] == 'rollback' else "배포"
-            version_info = f"v{command['version']}" if command['version'] else "최신 버전"
-            
-            success_message = (
-                f"{action_emoji} *{action_text} 요청이 접수되었습니다!*\n\n"
-                f"• 사용자: <@{user_id}>\n"
-                f"• 작업: {action_text}\n"
-                f"• 버전: {version_info}\n"
-                f"• GitHub Actions 워크플로우가 트리거되었습니다.\n"
-                f"• 진행 상황은 GitHub Actions에서 확인할 수 있습니다."
-            )
+        # 배포 키워드가 감지되고 GitHub 트리거가 성공한 경우에만 Slack 메시지 전송
+        if body.get('ok') and is_deploy_message and body.get('message') != 'No deployment triggered' and channel:
+            success_message = f"🚀 *배포 요청이 접수되었습니다!*\n\n• 사용자: <@{user_id}>\n• GitHub Actions 워크플로우가 트리거되었습니다.\n• 진행 상황은 GitHub Actions에서 확인할 수 있습니다."
             send_slack_message(channel, success_message)
             logger.info(f"Slack confirmation message sent to channel {channel}")
     
@@ -303,99 +236,122 @@ def handle_message_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         'body': json.dumps({'ok': True})
     }
 
+def trigger_github_deployment_from_command(command_text: str, user_id: str) -> Dict[str, Any]:
+    """
+    GitHub repository_dispatch 이벤트 트리거 (Slash Command용)
+    """
+    url = f'https://api.github.com/repos/{GITHUB_ID}/{GITHUB_REPO}/dispatches'
+    headers = {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
+    }
+    
+    payload = {
+        'event_type': 'start-deployment', # <-- (주의) GitHub Actions YML의 types와 일치시킬 것
+        'client_payload': {
+            'message': command_text,
+            'user': user_id,
+        }
+    }
+    
+    try:
+        logger.info(f"Calling GitHub API from Command: {url}")
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        
+        if response.status_code == 204:
+            logger.info(f"GitHub repository_dispatch triggered successfully by user {user_id}")
+            return {'ok': True, 'message': f"✅ 알겠습니다! GitHub Actions 배포를 트리거했습니다. (전달값: {command_text})"}
+        else:
+            logger.error(f"GitHub API error: {response.status_code} - {response.text}")
+            # [중요] GitHub가 보낸 "진짜" 에러를 Slack에 반환합니다.
+            return {'ok': False, 'message': f'❌ GitHub API 호출 실패! (Code: {response.status_code})\n{response.text}'}
+            
+    except Exception as e:
+        logger.exception(f"Error calling GitHub API: {e}")
+        return {'ok': False, 'message': f'❌ Lambda 내부 에러: {e}'}
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    AWS Lambda 핸들러
-    Slack Events API 요청을 처리
+    AWS Lambda 핸들러 (v2: 라우터 기능 추가)
+    - JSON (URL 챌린지, 이벤트)
+    - Form (슬래시 명령어, 버튼 클릭)
     """
     try:
-        # 이벤트 구조 로깅 (디버깅용)
         logger.info(f"Event received: {json.dumps(event, default=str)}")
         
-        # API Gateway Proxy Integration에서 body 처리
         body_str = event.get('body', '{}')
-        
-        # Base64 디코딩 (API Gateway가 base64로 인코딩한 경우)
         if event.get('isBase64Encoded', False):
             import base64
-            try:
-                body_str = base64.b64decode(body_str).decode('utf-8')
-                logger.info("Body was base64 encoded, decoded successfully")
-            except Exception as e:
-                logger.error(f"Failed to decode base64 body: {e}")
-                return {
-                    'statusCode': 400,
-                    'body': json.dumps({'error': 'Failed to decode body'})
-                }
+            body_str = base64.b64decode(body_str).decode('utf-8')
+            logger.info("Body was base64 encoded, decoded successfully")
+
+        # --- (라우터 시작) ---
+
+        # Case 1: "Form" 형식인가? (Slash Command 또는 Button Click)
+        if event['headers'].get('Content-Type') == 'application/x-www-form-urlencoded':
+            
+            # 1-1: 서명 검증 (Form 데이터는 서명 검증이 필수)
+            if not verify_slack_request(event, body_str):
+                logger.warning("Request verification failed")
+                return {'statusCode': 403, 'body': json.dumps({'error': 'Forbidden'})}
+            
+            logger.info("Form data received. Parsing...")
+            payload = parse_qs(body_str)
+            
+            # 1-2: "Slash Command"인가?
+            if 'command' in payload:
+                command = payload.get('command', [''])[0]
+                command_text = payload.get('text', [''])[0]
+                user_id = payload.get('user_id', ['unknown'])[0]
+                
+                if command == '/platform-deploy':
+                    logger.info(f"Slash command '{command} {command_text}' received from user {user_id}")
+                    # GitHub 트리거 함수 호출
+                    result = trigger_github_deployment_from_command(command_text, user_id)
+                    # Slack에 즉시 응답
+                    return {'statusCode': 200, 'body': result['message']}
+            
+            # 1-3: "Button Click"인가? (나중을 위해 남겨둠)
+            if 'payload' in payload: 
+                # (TODO: 버튼 클릭 처리 로직)
+                logger.info("Interactive payload (button) received.")
+                return {'statusCode': 200, 'body': 'Button click received!'}
+
+            logger.warning("Unknown form payload")
+            return {'statusCode': 400, 'body': 'Unknown form payload'}
+
+        # Case 2: "JSON" 형식인가? (URL 챌린지 또는 Message 이벤트)
+        try:
+            body = json.loads(body_str)
+            
+            # 2-1: "URL 검증 챌린지"인가?
+            if body.get('type') == 'url_verification':
+                logger.info("URL verification challenge received.")
+                return {'statusCode': 200, 'headers': {'Content-Type': 'text/plain'}, 'body': body.get('challenge')}
+
+            # 2-2: 서명 검증 (JSON 데이터도 서명 검증 필수)
+            if not verify_slack_request(event, body_str):
+                logger.warning("Request verification failed")
+                return {'statusCode': 403, 'body': json.dumps({'error': 'Forbidden'})}
+            
+            # 2-3: "Message 이벤트"인가?
+            if body.get('type') == 'event_callback':
+                logger.info("Event Callback (message) received.")
+                # 영민님의 기존 메시지 처리 함수 호출
+                return handle_message_event(body)
+
+        except json.JSONDecodeError:
+            # Case 1, 2 둘 다 아님
+            logger.error(f"Cannot parse body as Form or JSON: {body_str}")
+            return {'statusCode': 400, 'body': json.dumps({'error': 'Invalid request body'})}
         
-        # Body 파싱
-        body = {}
-        if isinstance(body_str, str):
-            try:
-                body = json.loads(body_str)
-                logger.info(f"Parsed body: {json.dumps(body)}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON body: {body_str}, Error: {e}")
-                return {
-                    'statusCode': 400,
-                    'body': json.dumps({'error': 'Invalid JSON', 'details': str(e)})
-                }
-        elif isinstance(body_str, dict):
-            # 이미 파싱된 경우
-            body = body_str
-            body_str = json.dumps(body_str)
-        
-        # URL 검증 (Event Subscriptions 설정 시) - 검증 전에 먼저 처리
-        # URL 검증 요청은 검증을 스킵하고 challenge를 바로 반환해야 함
-        if body.get('type') == 'url_verification':
-            challenge = body.get('challenge')
-            if challenge:
-                logger.info(f"URL verification challenge received: {challenge}")
-                # API Gateway Proxy Integration 형식으로 반환
-                return {
-                    'statusCode': 200,
-                    'headers': {
-                        'Content-Type': 'text/plain'
-                    },
-                    'body': challenge  # challenge 값 그대로 반환 (문자열)
-                }
-            else:
-                logger.error("URL verification challenge missing")
-                return {
-                    'statusCode': 400,
-                    'body': json.dumps({'error': 'Challenge missing'})
-                }
-        
-        # 일반 이벤트는 서명 검증 필요
-        if not verify_slack_request(event, body_str):
-            logger.warning("Request verification failed")
-            return {
-                'statusCode': 403,
-                'body': json.dumps({'error': 'Forbidden'})
-            }
-        
-        # 이벤트 처리
-        if body.get('type') == 'event_callback':
-            return handle_message_event(body)
-        
-        # 기타 이벤트는 200 응답 (Slack 요구사항)
+        # --- (라우터 끝) ---
+
         logger.info(f"Unhandled event type: {body.get('type')}")
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'ok': True})
-        }
+        return {'statusCode': 200, 'body': json.dumps({'ok': True})}
         
     except Exception as e:
         logger.exception(f"Error processing event: {e}")
-        import traceback
-        error_trace = traceback.format_exc()
-        logger.error(f"Full traceback: {error_trace}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': 'Internal server error',
-                'message': str(e)
-            })
-        }
+        return {'statusCode': 500, 'body': json.dumps({'error': 'Internal server error', 'message': str(e)})}
 
