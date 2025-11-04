@@ -428,7 +428,7 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
         lines.append(f"• `{image_name}` → {tag_text}")
 
     message = "\n".join(lines)
-    send_slack_message(channel_id, message, response_url)
+    # send_slack_message(channel_id, message, response_url)
     return {'ok': True, 'message': message}
 
 
