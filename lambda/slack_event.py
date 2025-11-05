@@ -691,12 +691,17 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
             )
             break
 
-        display_tags = tags[:max_tags]
+        display_versions = tags[:max_tags]
 
         lines.append(f"• `{image_name}`")
 
-        if display_tags:
-            lines.extend(f"  - `{tag}`" for tag in display_tags)
+        if display_versions:
+            for version_tags in display_versions:
+                if version_tags:
+                    formatted_tags = ", ".join(f"`{tag}`" for tag in version_tags)
+                    lines.append(f"  - {formatted_tags}")
+                else:
+                    lines.append("  - (빈 버전)")
             if len(tags) > max_tags:
                 lines.append("  - …")
         else:

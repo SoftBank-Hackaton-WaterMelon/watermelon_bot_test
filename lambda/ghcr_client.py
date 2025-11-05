@@ -63,8 +63,8 @@ class GHCRClient:
         logging.info("총 %d개의 이미지를 찾았습니다.", len(image_names))
         return image_names
 
-    def list_tags(self, image_name: str) -> List[str]:
-        """지정된 컨테이너 이미지에 존재하는 모든 태그를 반환합니다."""
+    def list_tags(self, image_name: str) -> List[List[str]]:
+        """지정된 컨테이너 이미지에 존재하는 태그 목록을 버전 단위로 반환합니다."""
 
         if not image_name:
             raise ValueError("image_name은 비어 있을 수 없습니다.")
@@ -76,18 +76,25 @@ class GHCRClient:
         )
 
         versions = self._paginate(url, {"per_page": 100})
-        tags: List[str] = []
+        tags_by_version: List[List[str]] = []
         for version in versions:
             metadata = version.get("metadata", {})
             container_meta = metadata.get("container", {})
-            tags.extend(container_meta.get("tags", []))
+            tags = container_meta.get("tags", [])
+            if tags:
+                tags_by_version.append(list(tags))
 
-        unique_tags = sorted(set(tags))
-        logging.info("'%s' 이미지에서 %d개의 태그를 찾았습니다.", image_name, len(unique_tags))
-        return unique_tags
+        logging.info(
+            "'%s' 이미지에서 태그 목록 %d세트를 찾았습니다.",
+            image_name,
+            len(tags_by_version),
+        )
+        return tags_by_version
 
-    def list_images_with_tags(self, images: Optional[Iterable[str]] = None) -> Dict[str, List[str]]:
-        """이미지와 해당 태그를 매핑한 딕셔너리를 반환합니다."""
+    def list_images_with_tags(
+        self, images: Optional[Iterable[str]] = None
+    ) -> Dict[str, List[List[str]]]:
+        """이미지와 태그 목록(버전별)을 매핑한 딕셔너리를 반환합니다."""
 
         image_names = list(images) if images is not None else self.list_images()
         output: Dict[str, List[str]] = {}
@@ -159,8 +166,8 @@ def get_container_images_with_tags(
     org: Optional[str] = None,
     images: Optional[Iterable[str]] = None,
     session: Optional[requests.Session] = None,
-) -> Dict[str, List[str]]:
-    """GHCR에서 이미지와 태그를 딕셔너리 형태로 반환합니다."""
+) -> Dict[str, List[List[str]]]:
+    """GHCR에서 이미지와 태그 목록(버전별)을 딕셔너리 형태로 반환합니다."""
 
     _validate_identity(username, org)
     client = GHCRClient(username=username, org=org, token=token, session=session)
