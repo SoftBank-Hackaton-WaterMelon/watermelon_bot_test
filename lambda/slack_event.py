@@ -692,14 +692,15 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
             break
 
         display_tags = tags[:max_tags]
-        if display_tags:
-            tag_text = ", ".join(display_tags)
-            if len(tags) > max_tags:
-                tag_text += " …"
-        else:
-            tag_text = "태그 없음"
 
-        lines.append(f"• `{image_name}` → {tag_text}")
+        lines.append(f"• `{image_name}`")
+
+        if display_tags:
+            lines.extend(f"  - `{tag}`" for tag in display_tags)
+            if len(tags) > max_tags:
+                lines.append("  - …")
+        else:
+            lines.append("  - 태그 없음")
 
     message = "\n".join(lines)
     return {'ok': True, 'message': message}
