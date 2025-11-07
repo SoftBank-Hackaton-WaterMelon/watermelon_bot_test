@@ -1,4 +1,4 @@
-"""GitHub Container Registry 이미지 및 태그 열람 도구.
+"""GitHub Container Registry 이미지 및 태그 열람 도구. 
 
 GitHub Packages REST API를 사용하여 지정된 사용자 혹은 조직의 컨테이너
 이미지 목록과 각 이미지의 태그를 수집합니다. 문서화된 모범 사례를 기반으로
