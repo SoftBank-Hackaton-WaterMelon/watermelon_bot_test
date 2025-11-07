@@ -636,7 +636,7 @@ def handle_status_command() -> Dict[str, Any]:
         return {'ok': False, 'message': f'❌ 상태 조회 실패: {str(e)}'}
 
 
-def handle_deploy_approve_command(command_text: str, approver_id: str) -> Dict[str, Any]:
+def handle_deploy_approve_command(command_text: str, approver_id: str, channel_id: str, response_url: str) -> Dict[str, Any]:
     """CodeDeploy 라이프사이클 훅 승인."""
     deployment_id = (command_text or '').strip().split()[0] if command_text else ''
 
@@ -664,6 +664,7 @@ def handle_deploy_approve_command(command_text: str, approver_id: str) -> Dict[s
             f"• Deployment ID: `{deployment_id}`\n"
             f"• 승인자: <@{approver_id}>"
         )
+        send_slack_message(channel_id, message, response_url)
         return {'ok': True, 'message': message}
     except Exception as exc:
         logger.exception("CodeDeploy 배포 승인 실패: %s", exc)
