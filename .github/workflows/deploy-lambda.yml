@@ -47,7 +47,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-southeast-2
+          aws-region: ap-northeast-2
 
       - name: Update Lambda function
         if: steps.check_credentials.outputs.skip_deployment == 'false'
@@ -55,7 +55,7 @@ jobs:
           aws lambda update-function-code \
             --function-name slackbot-chatops \
             --zip-file fileb://lambda/lambda_function.zip \
-            --region ap-southeast-2
+            --region ap-northeast-2
 
       - name: Deployment notification
         run: |
