@@ -11,12 +11,13 @@ import hmac
 import hashlib
 import time
 import logging
+import shlex
 import requests
 import boto3
 import datetime
 import uuid
 from typing import Dict, Any, List, Optional
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs
 from ghcr_client import get_container_images_with_tags
 
 # AWS 클라이언트 초기화
@@ -343,6 +344,64 @@ def request_action_approval(
     return info_text
 
 
+def extract_deploy_tag(command_text: str) -> str:
+    """Slash Command 텍스트에서 배포 태그 추출 (없으면 latest)"""
+    default_tag = 'latest'
+    if not command_text:
+        return default_tag
+
+    try:
+        tokens = shlex.split(command_text)
+    except ValueError:
+        tokens = command_text.strip().split()
+
+    if not tokens:
+        return default_tag
+
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if not token:
+            i += 1
+            continue
+
+        lowered = token.lower()
+
+        if lowered == '--force':
+            i += 1
+            continue
+
+        if lowered.startswith('--tag='):
+            value = token.split('=', 1)[1].strip()
+            if value:
+                return value
+            i += 1
+            continue
+
+        if lowered == '--tag':
+            if i + 1 < len(tokens):
+                candidate = tokens[i + 1].strip()
+                if candidate and not candidate.startswith('--'):
+                    return candidate
+            i += 2
+            continue
+
+        if lowered.startswith('tag='):
+            value = token.split('=', 1)[1].strip()
+            if value:
+                return value
+            i += 1
+            continue
+
+        if token.startswith('--'):
+            i += 1
+            continue
+
+        return token
+
+    return default_tag
+
+
 def trigger_github_deployment_async(command_text: str, user_id: str, channel_id: str, response_url: str):
     """GitHub API 호출 (비동기 버전) - 강화된 디버깅"""
     
@@ -358,13 +417,19 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
     }
     
     # Payload 구성
+    deployment_tag = extract_deploy_tag(command_text)
+
     payload = {
-        'event_type': 'dev_deploy',
+        'event_type': 'aws_code_deploy',
         'client_payload': {
             'message': command_text,
             'user': user_id,
             'timestamp': str(int(time.time())),
-            'source': 'slack-chatops'
+            'source': 'slack-chatops',
+            'tag': deployment_tag,
+            'inputs': {
+                'tag': deployment_tag,
+            },
         }
     }
     
@@ -374,6 +439,7 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
             repository=f"{GITHUB_ID}/{GITHUB_REPO}",
             command=command_text,
             requested_by=user_id,
+            tag=deployment_tag,
         )
         
         logger.info("=" * 80)
@@ -399,7 +465,8 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"• 요청자: <@{user_id}>\n"
                 f"• 메시지: `{command_text}`\n"
                 f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n"
-                f"• Event Type: `dev_deploy`\n"
+                f"• Tag: `{deployment_tag}`\n"
+                f"• Event Type: `aws_code_deploy`\n"
                 f"• GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
                 f"  https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
@@ -410,6 +477,7 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 repository=f"{GITHUB_ID}/{GITHUB_REPO}",
                 command=command_text,
                 requested_by=user_id,
+                tag=deployment_tag,
             )
             publish_metric('DeployDispatchSuccess', dimensions={'Repository': GITHUB_REPO})
             return
