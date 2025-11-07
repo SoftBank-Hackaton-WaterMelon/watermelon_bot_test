@@ -17,12 +17,15 @@ import boto3
 import datetime
 import uuid
 from typing import Dict, Any, List, Optional
+
+from approve_deploy import approve_deploy
 from urllib.parse import parse_qs
 from ghcr_client import get_container_images_with_tags
 
 # AWS 클라이언트 초기화
 ecs_client = boto3.client('ecs')
 codedeploy_client = boto3.client('codedeploy')
+dynamodb_client = boto3.client('dynamodb')
 lambda_client = boto3.client('lambda')
 cloudwatch_client = boto3.client('cloudwatch')
 
@@ -43,6 +46,7 @@ ECS_SERVICE_NAME = os.environ.get('ECS_SERVICE_NAME', 'atlas-app-service')
 CODEDEPLOY_APP_NAME = os.environ.get('CODEDEPLOY_APP_NAME', 'atlas-codedeploy-app')
 CODEDEPLOY_GROUP_NAME = os.environ.get('CODEDEPLOY_GROUP_NAME', 'atlas-codedeploy-group')
 MONITORING_METRIC_NAMESPACE = os.environ.get('MONITORING_METRIC_NAMESPACE', '')
+DEPLOY_APPROVAL_TABLE = os.environ.get('DEPLOY_APPROVAL_TABLE', 'softbank_deploy')
 
 _TRUE_VALUES = {'1', 'true', 'yes', 'on'}
 DEPLOY_APPROVAL_REQUIRED = os.environ.get('DEPLOY_APPROVAL_REQUIRED', 'false').lower() in _TRUE_VALUES
@@ -632,6 +636,54 @@ def handle_status_command() -> Dict[str, Any]:
         return {'ok': False, 'message': f'❌ 상태 조회 실패: {str(e)}'}
 
 
+def handle_deploy_approve_command(command_text: str, approver_id: str) -> Dict[str, Any]:
+    """CodeDeploy 라이프사이클 훅 승인."""
+    deployment_id = (command_text or '').strip().split()[0] if command_text else ''
+
+    if not deployment_id:
+        guidance = "예: `/platform-deploy-approve d-XXXXXXXXX`"
+        message = "❌ deployment_id를 입력하세요.\n" + guidance
+        return {'ok': False, 'message': message}
+
+    try:
+        approve_deploy(
+            codedeploy_client=codedeploy_client,
+            dynamodb_client=dynamodb_client,
+            deployment_id=deployment_id,
+            table_name=DEPLOY_APPROVAL_TABLE,
+        )
+        log_event(
+            'codedeploy.approval.succeeded',
+            deployment_id=deployment_id,
+            approved_by=approver_id,
+            table_name=DEPLOY_APPROVAL_TABLE,
+        )
+        publish_metric('DeployHookApproval', dimensions={'Result': 'Success'})
+        message = (
+            "✅ *CodeDeploy 배포 승인 완료*\n"
+            f"• Deployment ID: `{deployment_id}`\n"
+            f"• 승인자: <@{approver_id}>"
+        )
+        return {'ok': True, 'message': message}
+    except Exception as exc:
+        logger.exception("CodeDeploy 배포 승인 실패: %s", exc)
+        log_event(
+            'codedeploy.approval.failed',
+            level='error',
+            deployment_id=deployment_id,
+            approved_by=approver_id,
+            table_name=DEPLOY_APPROVAL_TABLE,
+            error=str(exc),
+        )
+        publish_metric('DeployHookApproval', dimensions={'Result': 'Failed'})
+        message = (
+            "❌ *CodeDeploy 배포 승인 실패*\n"
+            f"• Deployment ID: `{deployment_id}`\n"
+            f"• 오류: `{exc}`"
+        )
+        return {'ok': False, 'message': message}
+
+
 def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = None) -> Dict[str, Any]:
     """CodeDeploy 롤백 실행"""
     try:
@@ -846,6 +898,9 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
         return {'ok': True, 'message': immediate_response}
     
     # 다른 명령어는 빠르게 처리 가능
+    elif command == '/platform-deploy-approve':
+        return handle_deploy_approve_command(command_text, user_id)
+
     elif command == '/platform-status':
         return handle_status_command()
     
