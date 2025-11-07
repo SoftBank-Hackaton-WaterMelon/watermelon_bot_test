@@ -347,64 +347,6 @@ def request_action_approval(
     return info_text
 
 
-def extract_deploy_tag(command_text: str) -> str:
-    """Slash Command 텍스트에서 배포 태그 추출 (없으면 latest)"""
-    default_tag = 'latest'
-    if not command_text:
-        return default_tag
-
-    try:
-        tokens = shlex.split(command_text)
-    except ValueError:
-        tokens = command_text.strip().split()
-
-    if not tokens:
-        return default_tag
-
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if not token:
-            i += 1
-            continue
-
-        lowered = token.lower()
-
-        if lowered == '--force':
-            i += 1
-            continue
-
-        if lowered.startswith('--tag='):
-            value = token.split('=', 1)[1].strip()
-            if value:
-                return value
-            i += 1
-            continue
-
-        if lowered == '--tag':
-            if i + 1 < len(tokens):
-                candidate = tokens[i + 1].strip()
-                if candidate and not candidate.startswith('--'):
-                    return candidate
-            i += 2
-            continue
-
-        if lowered.startswith('tag='):
-            value = token.split('=', 1)[1].strip()
-            if value:
-                return value
-            i += 1
-            continue
-
-        if token.startswith('--'):
-            i += 1
-            continue
-
-        return token
-
-    return default_tag
-
-
 def trigger_github_deployment_async(command_text: str, user_id: str, channel_id: str, response_url: str):
     """GitHub API 호출 (비동기 버전) - 강화된 디버깅"""
     
@@ -891,7 +833,7 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
     
     # 다른 명령어는 빠르게 처리 가능
     elif command == '/platform-deploy-approve':
-        return handle_deploy_approve_command(command_text, user_id)
+        return handle_deploy_approve_command(command_text, user_id, channel_id, response_url)
 
     elif command == '/platform-status':
         return handle_status_command()
