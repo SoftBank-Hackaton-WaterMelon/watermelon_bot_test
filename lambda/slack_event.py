@@ -11,7 +11,6 @@ import hmac
 import hashlib
 import time
 import logging
-import shlex
 import requests
 import boto3
 import datetime
@@ -19,7 +18,7 @@ import uuid
 from typing import Dict, Any, List, Optional
 
 from approve_deploy import approve_deploy
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 from ghcr_client import get_container_images_with_tags
 
 # AWS 클라이언트 초기화
@@ -421,19 +420,14 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
     }
     
     # Payload 구성
-    deployment_tag = extract_deploy_tag(command_text)
 
     payload = {
-        'event_type': 'aws_code_deploy',
+        'event_type': 'dev_deploy',
         'client_payload': {
             'message': command_text,
             'user': user_id,
             'timestamp': str(int(time.time())),
-            'source': 'slack-chatops',
-            'tag': deployment_tag,
-            'inputs': {
-                'tag': deployment_tag,
-            },
+            'source': 'slack-chatops'
         }
     }
     
@@ -442,8 +436,7 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
             'github.dispatch.requested',
             repository=f"{GITHUB_ID}/{GITHUB_REPO}",
             command=command_text,
-            requested_by=user_id,
-            tag=deployment_tag,
+            requested_by=user_id
         )
         
         logger.info("=" * 80)
@@ -469,8 +462,7 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"• 요청자: <@{user_id}>\n"
                 f"• 메시지: `{command_text}`\n"
                 f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n"
-                f"• Tag: `{deployment_tag}`\n"
-                f"• Event Type: `aws_code_deploy`\n"
+                f"• Event Type: `dev_deploy`\n"
                 f"• GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
                 f"  https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
@@ -480,8 +472,7 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 'github.dispatch.success',
                 repository=f"{GITHUB_ID}/{GITHUB_REPO}",
                 command=command_text,
-                requested_by=user_id,
-                tag=deployment_tag,
+                requested_by=user_id
             )
             publish_metric('DeployDispatchSuccess', dimensions={'Repository': GITHUB_REPO})
             return
