@@ -4,7 +4,7 @@ from typing import Optional
 
 
 class DeploymentApprover:
-    """CodeDeploy 배포를 승인하기 위한 헬퍼 클래스"""
+    """CodeDeploy 배포를 승인하기 위한 헬퍼 클래스."""
 
     def __init__(
         self,
