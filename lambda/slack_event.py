@@ -1,6 +1,6 @@
 """
-AWS Lambda function for Slack Events API (v5 - GITHUB DISPATCH FIX)
-- /platform-deploy (GitHub Trigger) - 비동기 처리 + 디버깅 강화
+AWS Lambda function for Slack Events API (v6 - CHIIKAWA COMPLETE)
+- /platform-deploy (GitHub Trigger) - 비동기 처리 + 디버깅 강화 + 치이카와 대화
 - /platform-status (ECS Read)
 - /platform-rollback (CodeDeploy Trigger)
 """
@@ -16,6 +16,7 @@ import boto3
 import datetime
 import uuid
 from typing import Dict, Any, List, Optional
+import random
 
 from approve_deploy import approve_deploy
 from urllib.parse import parse_qs, unquote
@@ -54,6 +55,28 @@ SLACK_APPROVER_IDS = {
     approver.strip()
     for approver in os.environ.get('SLACK_APPROVER_IDS', '').split(',')
     if approver.strip()
+}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 치이카와 대화 시스템
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CHIIKAWA_DIALOGS = {
+    # Lambda 관련
+    'deploy_request': '배포가 시작됐어요~',
+    'deploy_approval_request': '새 버전 배포 요청이 도착했어요. 승인해주실래요?\n'
+'「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」',
+    'deploy_approved': '배포가 승인되었어요! 🎉 이제 깃허브 액션으로 워크플로우를 실행할게요.\n'
+'「デプロイが承認されました！🎉　これから GitHub Actions でワークフローを実行しますね！」',
+    
+    # GitHub Actions 단계 (Lambda에서는 성공 메시지만 받음)
+    'github_trigger_success': '모든 단계가 성공이에요! 코드도, 빌드도, 도커도 완벽✨\n'
+'「すべてのステップが成功です！✨　コードも、ビルドも、ドッカーも完璧！✨',
+    'github_trigger_failed': '앗... 배포가 실패했어요... 😢',
+    
+    # ECS/CodeDeploy 관련
+    'status_check': '지금 상태 확인해줄게! 🔍'
 }
 
 
@@ -113,7 +136,7 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
             payload = {
                 'text': text,
                 'response_type': 'in_channel',
-                'replace_original': False  # 기존 메시지 유지하고 새 메시지 추가
+                'replace_original': False
             }
             response = requests.post(response_url, json=payload, timeout=3)
             if response.status_code == 200:
@@ -134,7 +157,23 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
         'Authorization': f'Bearer {SLACK_BOT_TOKEN}',
         'Content-Type': 'application/json',
     }
-    payload = {'channel': channel, 'text': text}
+    payload={
+            "text": ":hammer_and_wrench: *Build Start*",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": ":hammer_and_wrench: *Build Start*\n*브랜치/태그*: `${{ github.ref_name }}`\n*커밋*: `${{ github.sha }}`\n\n이제 진짜 빌드 시작이에요! 💪 이미지 하나하나 정성껏 만드는 중...\n「いよいよビルド開始です！💪 一つひとつのイメージを心をこめて作っています…」"
+                }
+              },
+              {
+                "type": "image",
+                "image_url": "https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploying.gif?raw=true",
+                "alt_text": "Build Start - Deploying"
+              }
+            ]
+          }
     
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=3)
@@ -281,12 +320,17 @@ def request_action_approval(
         }
     )
     
+    # 🐹 치이카와: 배포 승인 대기
+    chiikawa_msg = "새 버전 배포 요청이 도착했어요. 승인해주실래요?\n"
+"「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」"
+
     blocks: List[Dict[str, Any]] = [
         {
             'type': 'section',
             'text': {
                 'type': 'mrkdwn',
                 'text': (
+                    f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
                     f"*{label} 승인 요청*\n"
                     f"• 요청자: <@{requested_by}>\n"
                     f"• 명령: `{command_text or 'N/A'}`\n"
@@ -322,6 +366,7 @@ def request_action_approval(
     ]
     
     info_text = (
+        f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
         f"⏳ *{label} 승인 대기 중...*\n"
         f"• 요청자: <@{requested_by}>\n"
         f"• 승인 채널: <#{channel_id}>"
@@ -362,7 +407,6 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
     }
     
     # Payload 구성
-
     payload = {
         'event_type': 'dev_deploy',
         'client_payload': {
@@ -386,7 +430,6 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
         logger.info(f"📍 URL: {url}")
         logger.info(f"🔑 Token (first 10 chars): {GITHUB_TOKEN[:10]}...")
         logger.info(f"📦 Payload:\n{json.dumps(payload, indent=2)}")
-        logger.info(f"📋 Headers:\n{json.dumps({k: v if k != 'Authorization' else 'token ***' for k, v in headers.items()}, indent=2)}")
         logger.info("=" * 80)
         
         # GitHub API 호출
@@ -394,21 +437,24 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
         
         logger.info("📥 GitHub API Response:")
         logger.info(f"  - Status Code: {response.status_code}")
-        logger.info(f"  - Headers: {dict(response.headers)}")
         logger.info(f"  - Body: {response.text}")
         
         # 성공 (204 No Content)
         if response.status_code == 204:
+            # 🐹 치이카와: GitHub 트리거 성공
+            chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_success']
+            
             success_msg = (
+                f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
                 f"✅ *GitHub Actions 배포 트리거 성공!*\n"
                 f"• 요청자: <@{user_id}>\n"
                 f"• 메시지: `{command_text}`\n"
                 f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n"
-                f"• Event Type: `dev_deploy`\n"
-                f"• GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
-                f"  https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
+                f"• Event Type: `dev_deploy`\n\n"
+                f"GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
+                f"https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
-            logger.info("✅✅✅ GitHub dispatch 성공!")
+            logger.info("✅ GitHub dispatch 성공!")
             send_slack_message(channel_id, success_msg, response_url)
             log_event(
                 'github.dispatch.success',
@@ -419,81 +465,19 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
             publish_metric('DeployDispatchSuccess', dimensions={'Repository': GITHUB_REPO})
             return
         
-        # 인증 실패 (401)
-        elif response.status_code == 401:
-            error_msg = (
-                f"❌ *GitHub Token 인증 실패!*\n"
-                f"• Token: `{GITHUB_TOKEN[:10]}...`\n"
-                f"• Response: `{response.text}`\n\n"
-                f"*해결 방법:*\n"
-                f"1. GitHub Settings > Developer settings > Personal access tokens\n"
-                f"2. Token에 `repo` 권한이 있는지 확인\n"
-                f"3. Lambda 환경변수 `GITHUB_PERSONAL_ACCESS_TOKEN` 재확인"
-            )
-            logger.error(f"❌ 401 Unauthorized: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
-            log_event(
-                'github.dispatch.failed',
-                level='error',
-                status=401,
-                response=response.text,
-            )
-            publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': '401'})
-            return
-        
-        # Repository 없음 (404)
-        elif response.status_code == 404:
-            error_msg = (
-                f"❌ *Repository를 찾을 수 없습니다!*\n"
-                f"• Owner: `{GITHUB_ID}`\n"
-                f"• Repo: `{GITHUB_REPO}`\n"
-                f"• URL: `{url}`\n"
-                f"• Response: `{response.text}`\n\n"
-                f"*해결 방법:*\n"
-                f"1. Repository 이름이 정확한지 확인\n"
-                f"2. Token에 해당 Repository 접근 권한이 있는지 확인\n"
-                f"3. Repository가 Public인지 Private인지 확인"
-            )
-            logger.error(f"❌ 404 Not Found: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
-            log_event(
-                'github.dispatch.failed',
-                level='error',
-                status=404,
-                response=response.text,
-            )
-            publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': '404'})
-            return
-        
-        # 권한 부족 (403)
-        elif response.status_code == 403:
-            error_msg = (
-                f"❌ *권한 부족!*\n"
-                f"• Response: `{response.text}`\n\n"
-                f"*해결 방법:*\n"
-                f"1. Token에 `workflow` scope 권한 추가 필요\n"
-                f"2. Token을 재생성하고 Lambda 환경변수 업데이트"
-            )
-            logger.error(f"❌ 403 Forbidden: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
-            log_event(
-                'github.dispatch.failed',
-                level='error',
-                status=403,
-                response=response.text,
-            )
-            publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': '403'})
-            return
-        
-        # 기타 에러
+        # 에러 응답 (401, 404, 403 등)
         else:
+            # 🐹 치이카와: GitHub 트리거 실패
+            chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
+            
             error_msg = (
+                f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
                 f"❌ *GitHub API 오류*\n"
                 f"• Status: `{response.status_code}`\n"
                 f"• Response: ```{response.text[:500]}```\n"
                 f"• URL: `{url}`"
             )
-            logger.error(f"❌ Unexpected status {response.status_code}: {response.text}")
+            logger.error(f"❌ Status {response.status_code}: {response.text}")
             send_slack_message(channel_id, error_msg, response_url)
             log_event(
                 'github.dispatch.failed',
@@ -505,14 +489,16 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
             return
             
     except requests.exceptions.Timeout:
-        error_msg = "❌ *GitHub API 타임아웃* (15초 초과)"
+        chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
+        error_msg = f"*{chiikawa_msg}*\n\n❌ *GitHub API 타임아웃* (15초 초과)"
         logger.error(error_msg)
         send_slack_message(channel_id, error_msg, response_url)
         log_event('github.dispatch.failed', level='error', status='timeout')
         publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': 'timeout'})
     
     except Exception as e:
-        error_msg = f"❌ *Lambda 내부 오류*\n```{str(e)}```"
+        chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
+        error_msg = f"*{chiikawa_msg}*\n\n❌ *Lambda 내부 오류*\n```{str(e)}```"
         logger.exception(f"💥 Exception: {e}")
         send_slack_message(channel_id, error_msg, response_url)
         log_event('github.dispatch.failed', level='error', status='exception', error=str(e))
@@ -524,7 +510,7 @@ def invoke_async_lambda(function_name: str, payload: Dict[str, Any]):
     try:
         response = lambda_client.invoke(
             FunctionName=function_name,
-            InvocationType='Event',  # 비동기 호출
+            InvocationType='Event',
             Payload=json.dumps(payload)
         )
         logger.info("✅ 비동기 Lambda 호출 성공")
@@ -539,6 +525,9 @@ def invoke_async_lambda(function_name: str, payload: Dict[str, Any]):
 def handle_status_command() -> Dict[str, Any]:
     """ECS 서비스 상태 조회"""
     try:
+        # 🐹 치이카와: 상태 조회
+        chiikawa_msg = CHIIKAWA_DIALOGS['status_check']
+        
         response = ecs_client.describe_services(
             cluster=ECS_CLUSTER_NAME,
             services=[ECS_SERVICE_NAME]
@@ -555,6 +544,7 @@ def handle_status_command() -> Dict[str, Any]:
         version = task_definition_arn.split('/')[-1] if task_definition_arn != 'N/A' else 'Unknown'
         
         message = (
+            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
             "✅ *ECS 서비스 상태*\n"
             f"• 서비스: `{ECS_SERVICE_NAME}`\n"
             f"• 클러스터: `{ECS_CLUSTER_NAME}`\n"
@@ -592,12 +582,16 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
             table_name=DEPLOY_APPROVAL_TABLE,
         )
         publish_metric('DeployHookApproval', dimensions={'Result': 'Success'})
+        
+        # 🐹 치이카와: 테스트 환경 확인 중
+        chiikawa_msg = "테스트 환경에서 확인 중이에요! 새 버전이 잘 작동하는지 조금만 기다려주세요."
+        
         message = (
+            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
             "✅ *CodeDeploy 배포 승인 완료*\n"
             f"• Deployment ID: `{deployment_id}`\n"
             f"• 승인자: <@{approver_id}>\n"
             "• 배포 결과를 확인하세요!\n"
-            "• http://demo-backend-test-486938261.ap-northeast-2.elb.amazonaws.com\n"
         )
         send_slack_message(channel_id, message, response_url)
         return {'ok': True, 'message': message}
@@ -608,7 +602,6 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
             level='error',
             deployment_id=deployment_id,
             approved_by=approver_id,
-            table_name=DEPLOY_APPROVAL_TABLE,
             error=str(exc),
         )
         publish_metric('DeployHookApproval', dimensions={'Result': 'Failed'})
@@ -623,6 +616,9 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
 def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = None) -> Dict[str, Any]:
     """CodeDeploy 롤백 실행"""
     try:
+        # 🐹 치이카와: 롤백 시작
+        chiikawa_start = CHIIKAWA_DIALOGS['rollback_start']
+        
         response = codedeploy_client.list_deployments(
             applicationName=CODEDEPLOY_APP_NAME,
             deploymentGroupName=CODEDEPLOY_GROUP_NAME,
@@ -650,7 +646,12 @@ def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = No
         )
         
         new_deployment_id = rollback_response.get('deploymentId')
+        
+        # 🐹 치이카와: 롤백 성공
+        chiikawa_success = CHIIKAWA_DIALOGS['rollback_success']
+        
         message = (
+            f"*{chiikawa_start}*\n\n"  # 🐹 시작!
             "🚨 *긴급 롤백 시작*\n"
             f"• 이전 배포 ID: `{latest_deployment_id}`\n"
             f"• 새 롤백 ID: `{new_deployment_id}`\n"
@@ -658,6 +659,8 @@ def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = No
         )
         if approved_by:
             message += f"\n• 승인자: <@{approved_by}>"
+        
+        message += f"\n\n*{chiikawa_success}*"  # 🐹 성공!
         
         log_event(
             'codedeploy.rollback.triggered',
@@ -686,7 +689,6 @@ def handle_rollback_command(user_id: str) -> Dict[str, Any]:
 
 def handle_container_list_command(channel_id: str, response_url: str) -> Dict[str, Any]:
     """GHCR 컨테이너 이미지 목록 조회 후 Slack 전송"""
-
     if not GITHUB_TOKEN:
         logger.error("GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다.")
         send_slack_message(
@@ -708,14 +710,6 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
     
     try:
         images_with_tags = get_container_images_with_tags(**ghcr_kwargs)
-    except ValueError as exc:
-        logger.error(f"GHCR 파라미터 오류: {exc}")
-        send_slack_message(channel_id, f"❌ GHCR 파라미터 오류: {exc}", response_url)
-        return {'ok': False, 'message': f"❌ GHCR 파라미터 오류: {exc}"}
-    except requests.RequestException as exc:
-        logger.error(f"GHCR 네트워크 오류: {exc}")
-        send_slack_message(channel_id, f"❌ GHCR 네트워크 오류: {exc}", response_url)
-        return {'ok': False, 'message': f"❌ GHCR 네트워크 오류: {exc}"}
     except Exception as exc:
         logger.exception(f"GHCR 조회 실패: {exc}")
         send_slack_message(channel_id, f"❌ GHCR 조회 실패: {exc}", response_url)
@@ -742,13 +736,10 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
 
     for index, (image_name, tags) in enumerate(sorted_items):
         if index >= max_images:
-            lines.append(
-                f"… (상위 `{max_images}`개만 표시, 총 `{len(sorted_items)}`개)"
-            )
+            lines.append(f"… (상위 `{max_images}`개만 표시, 총 `{len(sorted_items)}`개)")
             break
 
         display_versions = tags[:max_tags]
-
         lines.append(f"• `{image_name}`")
 
         if display_versions:
@@ -780,11 +771,9 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
     logger.info(f"  - Command: {command}")
     logger.info(f"  - Text: {command_text}")
     logger.info(f"  - User: {user_id}")
-    logger.info(f"  - Channel: {channel_id}")
-    logger.info(f"  - Response URL: {response_url[:50]}...")
     logger.info("=" * 80)
     
-    # /platform-deploy는 비동기 처리 시도 (권한 없으면 동기 처리)
+    # /platform-deploy는 비동기 처리 시도
     if command == '/platform-deploy':
         if DEPLOY_APPROVAL_REQUIRED and '--force' not in command_text:
             approval_text = request_action_approval(
@@ -797,8 +786,12 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
             )
             return {'ok': True, 'message': approval_text}
         
+        # 🐹 치이카와: 배포 요청 시작
+        chiikawa_msg = CHIIKAWA_DIALOGS['deploy_request']
+        
         # 즉시 응답 (Slack 3초 제한 회피)
         immediate_response = (
+            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
             "⏳ *배포 요청을 처리 중입니다...*\n"
             f"• 요청자: <@{user_id}>\n"
             f"• 메시지: `{command_text}`\n"
@@ -806,7 +799,7 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
             "_잠시 후 결과를 알려드리겠습니다..._"
         )
         
-        # 자기 자신을 비동기로 재호출 시도 (GitHub API 호출용)
+        # 자기 자신을 비동기로 재호출 시도
         async_payload = {
             'async_task': 'github_deploy',
             'command_text': command_text,
@@ -815,25 +808,18 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
             'response_url': response_url
         }
         
-        # Lambda 함수 이름 (현재 실행 중인 함수)
         function_name = context.function_name if context else os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
         
         async_success = False
         if function_name:
             async_success = invoke_async_lambda(function_name, async_payload)
         
-        # 비동기 호출 실패 시 동기로 폴백
         if not async_success:
-            logger.warning("⚠️ 비동기 호출 실패 또는 권한 없음, 동기 처리로 폴백")
-            logger.warning("⚠️ 주의: 3초 타임아웃 발생 가능")
-            logger.warning("⚠️ Lambda IAM Role에 lambda:InvokeFunction 권한 추가를 권장합니다")
-            
-            # 동기로 즉시 처리 (느릴 수 있음)
+            logger.warning("⚠️ 비동기 호출 실패, 동기 처리로 폴백")
             trigger_github_deployment_async(command_text, user_id, channel_id, response_url)
         
         return {'ok': True, 'message': immediate_response}
     
-    # 다른 명령어는 빠르게 처리 가능
     elif command == '/platform-deploy-approve':
         return handle_deploy_approve_command(command_text, user_id, channel_id, response_url)
 
@@ -867,14 +853,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러 - 요청 라우팅"""
     try:
         logger.info("🎯 Lambda 실행 시작")
-        logger.info(f"📨 Event: {json.dumps(event, default=str, indent=2)}")
         
-        # 비동기 작업 처리 (자기 자신이 호출한 경우)
+        # 비동기 작업 처리
         if 'async_task' in event:
             task_type = event['async_task']
             
             if task_type == 'github_deploy':
-                logger.info("🔄🔄🔄 비동기 GitHub 배포 작업 시작")
+                logger.info("🔄 비동기 GitHub 배포 작업 시작")
                 trigger_github_deployment_async(
                     event['command_text'],
                     event['user_id'],
@@ -884,7 +869,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 return {'statusCode': 200, 'body': json.dumps({'message': 'Async task completed'})}
             
             if task_type == 'execute_rollback':
-                logger.info("🔄🔄🔄 비동기 CodeDeploy 롤백 작업 시작")
+                logger.info("🔄 비동기 롤백 작업 시작")
                 result = execute_codeploy_rollback(
                     requested_by=event['requested_by'],
                     approved_by=event.get('approved_by'),
@@ -927,7 +912,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Interactive 버튼 처리
             if 'payload' in payload:
                 payload_json = json.loads(payload['payload'][0])
-                logger.info(f"🔘 Interactive payload: {payload_json}")
+                logger.info(f"🔘 Interactive payload 수신")
                 
                 actions = payload_json.get('actions') or []
                 if not actions:
@@ -948,36 +933,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         replace_original=False,
                         ephemeral=True,
                     )
-                    log_event('approval.denied.unauthorized', level='warning', approver=approver_id, action_id=action_id)
-                    publish_metric('ApprovalRejected', dimensions={'Action': 'unauthorized'})
+                    log_event('approval.denied.unauthorized', level='warning', approver=approver_id)
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 decoded_value = decode_action_value(action.get('value', ''))
                 requested_by = decoded_value.get('requested_by', 'unknown')
                 command_text = decoded_value.get('command_text', '')
-                request_id = decoded_value.get('request_id', '')
                 function_name = context.function_name if context else os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
                 
-                log_event(
-                    'approval.button.clicked',
-                    action_type=decoded_value.get('action_type'),
-                    action_id=action_id,
-                    approver=approver_id,
-                    requested_by=requested_by,
-                    request_id=request_id,
-                )
-                
                 if action_id == 'approve_deploy':
+                    # 🐹 치이카와: 배포 승인됨
+                    chiikawa_msg = CHIIKAWA_DIALOGS['deploy_approved']
+                    
                     send_slack_message_with_blocks(
                         channel=channel_id,
-                        text=f"✅ <@{approver_id}> 님이 배포를 승인했습니다.",
+                        text=f"*{chiikawa_msg}*\n\n✅ <@{approver_id}> 님이 배포를 승인했습니다.",
                         blocks=None,
                         response_url=response_url,
                         replace_original=True,
                     )
                     send_slack_message(
                         channel_id,
-                        f"🚀 *배포 승인 완료*\n• 요청자: <@{requested_by}>\n• 승인자: <@{approver_id}>\n• 명령: `{command_text}`"
+                        f"*{chiikawa_msg}*\n\n🚀 *배포 승인 완료*\n• 요청자: <@{requested_by}>\n• 승인자: <@{approver_id}>\n• 명령: `{command_text}`"
                     )
                     publish_metric('ApprovalGranted', dimensions={'Action': 'deploy'})
                     log_event(
@@ -985,9 +962,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         action_type='deploy',
                         approver=approver_id,
                         requested_by=requested_by,
-                        request_id=request_id,
-                        command=command_text,
                     )
+                    
                     async_payload = {
                         'async_task': 'github_deploy',
                         'command_text': command_text,
@@ -1019,14 +995,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         f"⚠️ *배포 거절됨*\n• 요청자: <@{requested_by}>\n• 거절자: <@{approver_id}>\n• 명령: `{command_text}`"
                     )
                     publish_metric('ApprovalRejected', dimensions={'Action': 'deploy'})
-                    log_event(
-                        'approval.rejected',
-                        action_type='deploy',
-                        approver=approver_id,
-                        requested_by=requested_by,
-                        request_id=request_id,
-                        command=command_text,
-                    )
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 if action_id == 'approve_rollback':
@@ -1038,13 +1006,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         replace_original=True,
                     )
                     publish_metric('ApprovalGranted', dimensions={'Action': 'rollback'})
-                    log_event(
-                        'approval.granted',
-                        action_type='rollback',
-                        approver=approver_id,
-                        requested_by=requested_by,
-                        request_id=request_id,
-                    )
+                    
                     async_payload = {
                         'async_task': 'execute_rollback',
                         'requested_by': requested_by,
@@ -1067,18 +1029,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         response_url=response_url,
                         replace_original=True,
                     )
-                    send_slack_message(
-                        channel_id,
-                        f"⚠️ *롤백 거절됨*\n• 요청자: <@{requested_by}>\n• 거절자: <@{approver_id}>"
-                    )
                     publish_metric('ApprovalRejected', dimensions={'Action': 'rollback'})
-                    log_event(
-                        'approval.rejected',
-                        action_type='rollback',
-                        approver=approver_id,
-                        requested_by=requested_by,
-                        request_id=request_id,
-                    )
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 return {'statusCode': 200, 'body': json.dumps({'ok': True})}
@@ -1103,20 +1054,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
             # Event Callback
             if body.get('type') == 'event_callback':
-                logger.info("📬 Event callback 수신 (무시)")
+                logger.info("📬 Event callback 수신")
                 return {'statusCode': 200, 'body': json.dumps({'ok': True})}
         
         except json.JSONDecodeError:
-            logger.error(f"❌ JSON 파싱 실패: {body_str}")
+            logger.error(f"❌ JSON 파싱 실패")
             return {'statusCode': 400, 'body': json.dumps({'error': 'Invalid JSON'})}
         
-        # 알 수 없는 요청
-        logger.warning("⚠️ 처리되지 않은 요청")
         return {'statusCode': 200, 'body': json.dumps({'ok': True})}
         
     except Exception as e:
-        logger.exception(f"💥💥💥 Lambda 오류: {e}")
+        logger.exception(f"💥 Lambda 오류: {e}")
         return {
             'statusCode': 500,
-            'body': json.dumps({'error': 'Internal server error', 'message': str(e)})
+            'body': json.dumps({'error': 'Internal server error'})
         }
