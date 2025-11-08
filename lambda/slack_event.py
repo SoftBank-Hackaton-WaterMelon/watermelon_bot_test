@@ -1,9 +1,8 @@
-"""
-AWS Lambda function for Slack Events API (v6 - CHIIKAWA COMPLETE)
-- /platform-deploy (GitHub Trigger) - 비동기 처리 + 디버깅 강화 + 치이카와 대화
-- /platform-status (ECS Read)
-- /platform-rollback (CodeDeploy Trigger)
-"""
+# AWS Lambda function for Slack Events API (v6 - CHIIKAWA COMPLETE)
+# - /platform-deploy (GitHub Trigger) - 비동기 처리 + 디버깅 강화 + 치이카와 대화
+# - /platform-status (ECS Read)
+# - /platform-rollback (CodeDeploy Trigger)
+#
 import base64
 import json
 import os
@@ -33,7 +32,7 @@ cloudwatch_client = boto3.client('cloudwatch')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# 환경 변수
+# 환경 변수 (이하 동일)
 SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET')
 SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
 GITHUB_TOKEN = os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN')
@@ -59,24 +58,51 @@ SLACK_APPROVER_IDS = {
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 치이카와 대화 시스템
+# 치이카와 대화 시스템 (✨ 수정됨)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 CHIIKAWA_DIALOGS = {
-    # Lambda 관련
-    'deploy_request': '배포가 시작됐어요~',
-    'deploy_approval_request': '새 버전 배포 요청이 도착했어요. 승인해주실래요?\n'
-'「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」',
-    'deploy_approved': '배포가 승인되었어요! 🎉 이제 깃허브 액션으로 워크플로우를 실행할게요.\n'
-'「デプロイが承認されました！🎉　これから GitHub Actions でワークフローを実行しますね！」',
-    
-    # GitHub Actions 단계 (Lambda에서는 성공 메시지만 받음)
-    'github_trigger_success': '모든 단계가 성공이에요! 코드도, 빌드도, 도커도 완벽✨\n'
-'「すべてのステップが成功です！✨　コードも、ビルドも、ドッカーも完璧！✨',
-    'github_trigger_failed': '앗... 배포가 실패했어요... 😢',
-    
-    # ECS/CodeDeploy 관련
-    'status_check': '지금 상태 확인해줄게! 🔍'
+    'approval_request': {
+        'text': '새 버전 배포 요청이 도착했어요. 승인해주실래요?\n 「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploying.gif?raw=true'
+    },
+    'deploy_start': {
+        'text': '“배포가 시작됐어요~\n「デプロイが始まりました〜！」', # 'test' -> 'text' 수정
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploy_start.gif?raw=true'
+    },
+    'deploy_approved': {
+        'text': '배포가 승인되었어요! 🎉 이제 깃허브 액션으로 워크플로우를 실행할게요.\n「デプロイが承認されました！🎉sこれから GitHub Actions でワークフローを実行しますね！」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deployment_trigger_success.gif?raw=true' # 누락된 따옴표 추가
+    },
+    'deploy_completed': {
+        'text': '“배포가 성공적으로 완료됐어요! 이제 서비스가 새 버전으로 반짝✨하고 있어요!\n「デプロイが無事に完了しました！サービスが新しいバージョンでキラキラ✨していますよ！」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploy_complete.gif?raw=true'
+    },
+    # --- ✨ 코드에서 사용하지만 누락되었던 키 추가 ---
+    'github_trigger_success': {
+        'text': 'GitHub Actions 워크플로우 실행을 성공적으로 요청했어요!\n「GitHub Actions ワークフローの実行リクエストが成功しました！」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deployment_trigger_success.gif?raw=true'
+    },
+    'github_trigger_failed': {
+        'text': '앗! GitHub API 호출에 실패했어요... (땀;)\n「あ！GitHub API の呼び出しに失敗しました…（汗;）」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/error.gif?raw=true'
+    },
+    'deploy_request': {
+        'text': '배포 요청을 접수했어요! 처리 중... \n「デプロイリクエストを受け付けました！処理中…」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploy_start.gif?raw=true'
+    },
+    'status_check': {
+        'text': '지금 서비스 상태를 확인해볼게요!\n「今からサービスの状態を確認しますね！」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/checking.gif?raw=true'
+    },
+    'rollback_start': {
+        'text': '앗! 롤백을 시작해요. 이전 버전으로... (총총)\n「あ！ロールバックを開始します。前のバージョンに…（トコトコ）」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/rollback.gif?raw=true'
+    },
+    'rollback_success': {
+        'text': '롤백 완료! 이전 버전으로 돌아왔어요.\n「ロールバック完了！前のバージョンに戻りました。」',
+        'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploy_complete.gif?raw=true'
+    }
 }
 
 
@@ -128,7 +154,7 @@ def verify_slack_request(event: Dict[str, Any], body_str: str) -> bool:
 
 
 def send_slack_message(channel: str, text: str, response_url: str = None) -> bool:
-    """Slack 메시지 전송 (채널 또는 response_url)"""
+    """Slack 메시지 전송 (채널 또는 response_url) - ✨ 수정됨: 텍스트 전용"""
     
     # response_url이 있으면 우선 사용 (더 빠름)
     if response_url:
@@ -157,23 +183,12 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
         'Authorization': f'Bearer {SLACK_BOT_TOKEN}',
         'Content-Type': 'application/json',
     }
-    payload={
-            "text": ":hammer_and_wrench: *Build Start*",
-            "blocks": [
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": ":hammer_and_wrench: *Build Start*\n*브랜치/태그*: `${{ github.ref_name }}`\n*커밋*: `${{ github.sha }}`\n\n이제 진짜 빌드 시작이에요! 💪 이미지 하나하나 정성껏 만드는 중...\n「いよいよビルド開始です！💪 一つひとつのイメージを心をこめて作っています…」"
-                }
-              },
-              {
-                "type": "image",
-                "image_url": "https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/deploying.gif?raw=true",
-                "alt_text": "Build Start - Deploying"
-              }
-            ]
-          }
+    
+    # ✨ 수정됨: 잘못 하드코딩된 치이카와 블록 제거. 텍스트만 보내도록 수정.
+    payload = {
+        "channel": channel,
+        "text": text
+    }
     
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=3)
@@ -191,13 +206,13 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
 
 def send_slack_message_with_blocks(
     channel: str,
-    text: str,
+    text: str, # Fallback text
     blocks: Optional[List[Dict[str, Any]]] = None,
     response_url: str = None,
     replace_original: bool = False,
     ephemeral: bool = False,
 ) -> bool:
-    """블록(버튼) 메시지 전송 헬퍼"""
+    """블록(버튼/이미지) 메시지 전송 헬퍼"""
     if response_url:
         try:
             payload: Dict[str, Any] = {
@@ -242,6 +257,7 @@ def send_slack_message_with_blocks(
         return False
 
 
+# --- (log_event, publish_metric, encode/decode, is_authorized_approver... 등은 변경 없음) ---
 def log_event(event_type: str, level: str = 'info', **data: Any) -> None:
     """CloudWatch에서 쉽게 필터링할 수 있도록 구조화 로그 출력"""
     payload = {
@@ -292,7 +308,7 @@ def decode_action_value(value: str) -> Dict[str, Any]:
 def is_authorized_approver(user_id: str) -> bool:
     return not SLACK_APPROVER_IDS or user_id in SLACK_APPROVER_IDS
 
-
+# --- (request_action_approval 함수는 변경 없음, 이미 블록을 사용 중) ---
 def request_action_approval(
     action_type: str,
     channel_id: str,
@@ -321,8 +337,11 @@ def request_action_approval(
     )
     
     # 🐹 치이카와: 배포 승인 대기
-    chiikawa_msg = "새 버전 배포 요청이 도착했어요. 승인해주실래요?\n"
-"「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」"
+    # ✨ 수정됨: 딕셔너리에서 동적으로 가져오기
+    dialog_key = 'approval_request'
+    dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+    chiikawa_text = dialog.get('text', '승인 요청이 도착했어요.')
+    chiikawa_image = dialog.get('image')
 
     blocks: List[Dict[str, Any]] = [
         {
@@ -330,13 +349,19 @@ def request_action_approval(
             'text': {
                 'type': 'mrkdwn',
                 'text': (
-                    f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+                    f"*{chiikawa_text}*\n\n"
                     f"*{label} 승인 요청*\n"
                     f"• 요청자: <@{requested_by}>\n"
                     f"• 명령: `{command_text or 'N/A'}`\n"
                     f"• 저장소: `{GITHUB_ID}/{GITHUB_REPO}`"
                 ),
             },
+        },
+        # ✨ 수정됨: 이미지를 별도 블록으로 추가
+        {
+            "type": "image",
+            "image_url": chiikawa_image,
+            "alt_text": "Approval Request"
         },
         {
             'type': 'context',
@@ -366,7 +391,7 @@ def request_action_approval(
     ]
     
     info_text = (
-        f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+        f"*{chiikawa_text}*\n\n"
         f"⏳ *{label} 승인 대기 중...*\n"
         f"• 요청자: <@{requested_by}>\n"
         f"• 승인 채널: <#{channel_id}>"
@@ -374,7 +399,7 @@ def request_action_approval(
     
     send_slack_message_with_blocks(
         channel=channel_id,
-        text=info_text,
+        text=info_text, # Fallback text
         blocks=blocks,
         response_url=response_url,
     )
@@ -389,11 +414,12 @@ def request_action_approval(
     )
     publish_metric('ApprovalRequested', dimensions={'Action': action_type})
     
-    return info_text
+    return info_text # 이 텍스트는 lambda_handler의 즉시 응답으로 감.
+# ----------------------------------------------------------------
 
 
 def trigger_github_deployment_async(command_text: str, user_id: str, channel_id: str, response_url: str):
-    """GitHub API 호출 (비동기 버전) - 강화된 디버깅"""
+    """GitHub API 호출 (비동기 버전) - 강화된 디버깅 - ✨ 수정됨: 블록 전송"""
     
     # GitHub API URL
     url = f'https://api.github.com/repos/{GITHUB_ID}/{GITHUB_REPO}/dispatches'
@@ -441,12 +467,13 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
         
         # 성공 (204 No Content)
         if response.status_code == 204:
-            # 🐹 치이카와: GitHub 트리거 성공
-            chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_success']
-            
-            success_msg = (
-                f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
-                f"✅ *GitHub Actions 배포 트리거 성공!*\n"
+            # 🐹 치이카와: GitHub 트리거 성공 (✨ 수정됨)
+            dialog_key = 'github_trigger_success'
+            dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+            chiikawa_text = dialog.get('text', 'GitHub Actions 배포 트리거 성공!')
+            chiikawa_image = dialog.get('image')
+
+            details_mrkdwn = (
                 f"• 요청자: <@{user_id}>\n"
                 f"• 메시지: `{command_text}`\n"
                 f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n"
@@ -454,8 +481,31 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"GitHub Actions 페이지에서 워크플로우 실행을 확인하세요:\n"
                 f"https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
+
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*\n\n✅ *GitHub Actions 배포 트리거 성공!*"}
+                },
+                {
+                    "type": "image",
+                    "image_url": chiikawa_image,
+                    "alt_text": "GitHub Trigger Success"
+                },
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": details_mrkdwn}
+                }
+            ]
+            
             logger.info("✅ GitHub dispatch 성공!")
-            send_slack_message(channel_id, success_msg, response_url)
+            send_slack_message_with_blocks(
+                channel=channel_id,
+                text="✅ GitHub Actions 배포 트리거 성공!", # Fallback text
+                blocks=blocks,
+                response_url=response_url
+            )
+            
             log_event(
                 'github.dispatch.success',
                 repository=f"{GITHUB_ID}/{GITHUB_REPO}",
@@ -467,18 +517,41 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
         
         # 에러 응답 (401, 404, 403 등)
         else:
-            # 🐹 치이카와: GitHub 트리거 실패
-            chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
-            
-            error_msg = (
-                f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+            # 🐹 치이카와: GitHub 트리거 실패 (✨ 수정됨)
+            dialog_key = 'github_trigger_failed'
+            dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+            chiikawa_text = dialog.get('text', 'GitHub API 오류')
+            chiikawa_image = dialog.get('image')
+
+            details_mrkdwn = (
                 f"❌ *GitHub API 오류*\n"
                 f"• Status: `{response.status_code}`\n"
                 f"• Response: ```{response.text[:500]}```\n"
                 f"• URL: `{url}`"
             )
+
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}
+                },
+                {
+                    "type": "image",
+                    "image_url": chiikawa_image,
+                    "alt_text": "GitHub Trigger Failed"
+                },
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": details_mrkdwn}
+                }
+            ]
             logger.error(f"❌ Status {response.status_code}: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
+            send_slack_message_with_blocks(
+                channel=channel_id,
+                text="❌ GitHub API 오류", # Fallback
+                blocks=blocks,
+                response_url=response_url
+            )
             log_event(
                 'github.dispatch.failed',
                 level='error',
@@ -489,18 +562,36 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
             return
             
     except requests.exceptions.Timeout:
-        chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
-        error_msg = f"*{chiikawa_msg}*\n\n❌ *GitHub API 타임아웃* (15초 초과)"
-        logger.error(error_msg)
-        send_slack_message(channel_id, error_msg, response_url)
+        # ✨ 수정됨 (Timeout)
+        dialog_key = 'github_trigger_failed'
+        dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+        chiikawa_text = dialog.get('text', 'GitHub API 타임아웃')
+        chiikawa_image = dialog.get('image')
+        
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}},
+            {"type": "image", "image_url": chiikawa_image, "alt_text": "GitHub Timeout"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "❌ *GitHub API 타임아웃* (15초 초과)"}}
+        ]
+        logger.error("GitHub API 타임아웃")
+        send_slack_message_with_blocks(channel_id, "❌ GitHub API 타임아웃", blocks, response_url)
         log_event('github.dispatch.failed', level='error', status='timeout')
         publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': 'timeout'})
     
     except Exception as e:
-        chiikawa_msg = CHIIKAWA_DIALOGS['github_trigger_failed']
-        error_msg = f"*{chiikawa_msg}*\n\n❌ *Lambda 내부 오류*\n```{str(e)}```"
+        # ✨ 수정됨 (Exception)
+        dialog_key = 'github_trigger_failed'
+        dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+        chiikawa_text = dialog.get('text', 'Lambda 내부 오류')
+        chiikawa_image = dialog.get('image')
+
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}},
+            {"type": "image", "image_url": chiikawa_image, "alt_text": "Lambda Error"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"❌ *Lambda 내부 오류*\n```{str(e)}```"}}
+        ]
         logger.exception(f"💥 Exception: {e}")
-        send_slack_message(channel_id, error_msg, response_url)
+        send_slack_message_with_blocks(channel_id, "❌ Lambda 내부 오류", blocks, response_url)
         log_event('github.dispatch.failed', level='error', status='exception', error=str(e))
         publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': 'exception'})
 
@@ -523,10 +614,13 @@ def invoke_async_lambda(function_name: str, payload: Dict[str, Any]):
 
 
 def handle_status_command() -> Dict[str, Any]:
-    """ECS 서비스 상태 조회"""
+    """ECS 서비스 상태 조회 - ✨ 수정됨: 블록 반환"""
     try:
         # 🐹 치이카와: 상태 조회
-        chiikawa_msg = CHIIKAWA_DIALOGS['status_check']
+        dialog_key = 'status_check'
+        dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+        chiikawa_text = dialog.get('text', 'ECS 서비스 상태')
+        chiikawa_image = dialog.get('image')
         
         response = ecs_client.describe_services(
             cluster=ECS_CLUSTER_NAME,
@@ -543,8 +637,7 @@ def handle_status_command() -> Dict[str, Any]:
         task_definition_arn = service.get('taskDefinition', 'N/A')
         version = task_definition_arn.split('/')[-1] if task_definition_arn != 'N/A' else 'Unknown'
         
-        message = (
-            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+        details_mrkdwn = (
             "✅ *ECS 서비스 상태*\n"
             f"• 서비스: `{ECS_SERVICE_NAME}`\n"
             f"• 클러스터: `{ECS_CLUSTER_NAME}`\n"
@@ -552,7 +645,25 @@ def handle_status_command() -> Dict[str, Any]:
             f"• ⏳ Pending: `{service.get('pendingCount', 0)}`개\n"
             f"• 🏷️ Version: `{version}`"
         )
-        return {'ok': True, 'message': message}
+        
+        # ✨ 수정됨: 블록 생성
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}
+            },
+            {
+                "type": "image",
+                "image_url": chiikawa_image,
+                "alt_text": "Status Check"
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": details_mrkdwn}
+            }
+        ]
+
+        return {'ok': True, 'message': "ECS 서비스 상태", 'blocks': blocks}
         
     except Exception as e:
         logger.exception(f"Status 조회 실패: {e}")
@@ -560,7 +671,7 @@ def handle_status_command() -> Dict[str, Any]:
 
 
 def handle_deploy_approve_command(command_text: str, approver_id: str, channel_id: str, response_url: str) -> Dict[str, Any]:
-    """CodeDeploy 라이프사이클 훅 승인."""
+    """CodeDeploy 라이프사이클 훅 승인. - ✨ 수정됨: 블록 전송"""
     deployment_id = (command_text or '').strip().split()[0] if command_text else ''
 
     if not deployment_id:
@@ -583,18 +694,33 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
         )
         publish_metric('DeployHookApproval', dimensions={'Result': 'Success'})
         
-        # 🐹 치이카와: 테스트 환경 확인 중
-        chiikawa_msg = "테스트 환경에서 확인 중이에요! 새 버전이 잘 작동하는지 조금만 기다려주세요."
+        # 🐹 치이카와: 테스트 환경 확인 중 (✨ 수정됨)
+        # 이 부분은 딕셔너리에 없어서 하드코딩 유지, 대신 블록으로 전송
+        chiikawa_text = "테스트 환경에서 확인 중이에요! 새 버전이 잘 작동하는지 조금만 기다려주세요."
+        chiikawa_image = "https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/checking.gif?raw=true" # 'checking' 이미지 재사용
         
-        message = (
-            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+        details_mrkdwn = (
             "✅ *CodeDeploy 배포 승인 완료*\n"
             f"• Deployment ID: `{deployment_id}`\n"
             f"• 승인자: <@{approver_id}>\n"
             "• 배포 결과를 확인하세요!\n"
         )
-        send_slack_message(channel_id, message, response_url)
-        return {'ok': True, 'message': message}
+        
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}},
+            {"type": "image", "image_url": chiikawa_image, "alt_text": "Deploy Approve"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": details_mrkdwn}}
+        ]
+        
+        send_slack_message_with_blocks(
+            channel=channel_id,
+            text="✅ CodeDeploy 배포 승인 완료",
+            blocks=blocks,
+            response_url=response_url
+        )
+        # 즉각적인 응답은 성공 메시지만 반환
+        return {'ok': True, 'message': "CodeDeploy 승인 처리 완료. (메시지 전송됨)"}
+    
     except Exception as exc:
         logger.exception("CodeDeploy 배포 승인 실패: %s", exc)
         log_event(
@@ -614,12 +740,16 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
 
 
 def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = None) -> Dict[str, Any]:
-    """CodeDeploy 롤백 실행"""
+    """CodeDeploy 롤백 실행 - ✨ 수정됨: 블록 반환"""
     try:
         # 🐹 치이카와: 롤백 시작
-        chiikawa_start = CHIIKAWA_DIALOGS['rollback_start']
-        
+        dialog_key_start = 'rollback_start'
+        dialog_start = CHIIKAWA_DIALOGS.get(dialog_key_start, {})
+        chiikawa_start_text = dialog_start.get('text', '롤백 시작')
+        chiikawa_start_image = dialog_start.get('image')
+
         response = codedeploy_client.list_deployments(
+            # ... (list_deployments logic) ...
             applicationName=CODEDEPLOY_APP_NAME,
             deploymentGroupName=CODEDEPLOY_GROUP_NAME,
             includeOnlyStatuses=['Succeeded'],
@@ -638,6 +768,7 @@ def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = No
         revision = deployment_info['deploymentInfo']['revision']
         
         rollback_response = codedeploy_client.create_deployment(
+            # ... (create_deployment logic) ...
             applicationName=CODEDEPLOY_APP_NAME,
             deploymentGroupName=CODEDEPLOY_GROUP_NAME,
             revision=revision,
@@ -648,19 +779,42 @@ def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = No
         new_deployment_id = rollback_response.get('deploymentId')
         
         # 🐹 치이카와: 롤백 성공
-        chiikawa_success = CHIIKAWA_DIALOGS['rollback_success']
+        dialog_key_success = 'rollback_success'
+        dialog_success = CHIIKAWA_DIALOGS.get(dialog_key_success, {})
+        chiikawa_success_text = dialog_success.get('text', '롤백 성공')
         
-        message = (
-            f"*{chiikawa_start}*\n\n"  # 🐹 시작!
+        details_mrkdwn = (
             "🚨 *긴급 롤백 시작*\n"
             f"• 이전 배포 ID: `{latest_deployment_id}`\n"
             f"• 새 롤백 ID: `{new_deployment_id}`\n"
             f"• 요청자: <@{requested_by}>"
         )
         if approved_by:
-            message += f"\n• 승인자: <@{approved_by}>"
+            details_mrkdwn += f"\n• 승인자: <@{approved_by}>"
         
-        message += f"\n\n*{chiikawa_success}*"  # 🐹 성공!
+        # ✨ 수정됨: 블록 생성
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{chiikawa_start_text}*"}
+            },
+            {
+                "type": "image",
+                "image_url": chiikawa_start_image,
+                "alt_text": "Rollback Start"
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": details_mrkdwn}
+            },
+            {
+                "type": "divider"
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{chiikawa_success_text}*"}
+            }
+        ]
         
         log_event(
             'codedeploy.rollback.triggered',
@@ -673,7 +827,8 @@ def execute_codeploy_rollback(requested_by: str, approved_by: Optional[str] = No
         )
         publish_metric('RollbackTriggered', dimensions={'Application': CODEDEPLOY_APP_NAME})
         
-        return {'ok': True, 'message': message}
+        # ✨ 수정됨: 블록 반환
+        return {'ok': True, 'message': "롤백 시작됨", 'blocks': blocks}
         
     except Exception as e:
         logger.exception(f"Rollback 실패: {e}")
@@ -688,14 +843,9 @@ def handle_rollback_command(user_id: str) -> Dict[str, Any]:
 
 
 def handle_container_list_command(channel_id: str, response_url: str) -> Dict[str, Any]:
-    """GHCR 컨테이너 이미지 목록 조회 후 Slack 전송"""
+    """GHCR 컨테이너 이미지 목록 조회 후 Slack 전송 (✨ 수정됨: 블록 반환)"""
     if not GITHUB_TOKEN:
         logger.error("GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다.")
-        send_slack_message(
-            channel_id,
-            "❌ GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다.",
-            response_url,
-        )
         return {
             'ok': False,
             'message': "❌ GHCR 조회를 위한 GitHub Token이 설정되지 않았습니다."
@@ -712,7 +862,6 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
         images_with_tags = get_container_images_with_tags(**ghcr_kwargs)
     except Exception as exc:
         logger.exception(f"GHCR 조회 실패: {exc}")
-        send_slack_message(channel_id, f"❌ GHCR 조회 실패: {exc}", response_url)
         return {'ok': False, 'message': f"❌ GHCR 조회 실패: {exc}"}
 
     if not images_with_tags:
@@ -721,45 +870,77 @@ def handle_container_list_command(channel_id: str, response_url: str) -> Dict[st
             f"• Owner: `{owner_name}`\n"
             "• 조회된 이미지가 없습니다."
         )
-        send_slack_message(channel_id, message, response_url)
-        return {'ok': True, 'message': message}
+        return {'ok': True, 'message': message} # 이미지가 없으면 텍스트만 반환
 
     max_images = int(GHCR_MAX_IMAGES)
     max_tags = int(GHCR_MAX_TAGS)
 
     sorted_items = sorted(images_with_tags.items())
-    lines = [
-        "📦 *GHCR 컨테이너 이미지 목록*",
-        f"• Owner: `{owner_name}`",
-        f"• 총 이미지: `{len(sorted_items)}`",
+    
+    # ✨ 수정됨: Slack 메시지를 Block Kit으로 구성
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "📦 GHCR 컨테이너 이미지 목록"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"• Owner: `{owner_name}`"},
+                {"type": "mrkdwn", "text": f"• 총 이미지: `{len(sorted_items)}`"}
+            ]
+        },
+        {"type": "divider"}
     ]
 
     for index, (image_name, tags) in enumerate(sorted_items):
         if index >= max_images:
-            lines.append(f"… (상위 `{max_images}`개만 표시, 총 `{len(sorted_items)}`개)")
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"… (상위 `{max_images}`개만 표시, 총 `{len(sorted_items)}`개)"}
+                ]
+            })
             break
 
-        display_versions = tags[:max_tags]
-        lines.append(f"• `{image_name}`")
-
-        if display_versions:
-            for version_tags in display_versions:
+        tag_lines = []
+        if tags:
+            for version_tags in tags[:max_tags]:
                 if version_tags:
                     formatted_tags = ", ".join(f"`{tag}`" for tag in version_tags)
-                    lines.append(f"  - {formatted_tags}")
+                    tag_lines.append(f"  - {formatted_tags}")
                 else:
-                    lines.append("  - (빈 버전)")
+                    tag_lines.append("  - (빈 버전)")
             if len(tags) > max_tags:
-                lines.append("  - …")
+                tag_lines.append("  - …")
         else:
-            lines.append("  - 태그 없음")
+            tag_lines.append("  - 태그 없음")
 
-    message = "\n".join(lines)
-    return {'ok': True, 'message': message}
+        image_section = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"• `{image_name}`\n" + "\n".join(tag_lines)
+            }
+        }
+        blocks.append(image_section)
+
+    # Slack Block Kit은 50개가 한계. 넘어가면 자름.
+    if len(blocks) > 50:
+        blocks = blocks[:49]
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "... (결과가 너무 많아 일부만 표시)"}]
+        })
+
+    return {'ok': True, 'message': "GHCR 이미지 목록", 'blocks': blocks}
 
 
 def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """Slash Command 라우터"""
+    """Slash Command 라우터 - ✨ 수정됨: 블록 반환 지원"""
     command = payload.get('command', [''])[0]
     command_text = payload.get('text', [''])[0]
     user_id = payload.get('user_id', ['unknown'])[0]
@@ -784,20 +965,40 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
                 requested_by=user_id,
                 metadata={'repository': f"{GITHUB_ID}/{GITHUB_REPO}"},
             )
+            # request_action_approval 함수가 블록을 직접 전송하므로,
+            # 여기서는 Slack에 3초 이내 응답을 위한 텍스트만 반환합니다.
             return {'ok': True, 'message': approval_text}
         
-        # 🐹 치이카와: 배포 요청 시작
-        chiikawa_msg = CHIIKAWA_DIALOGS['deploy_request']
-        
-        # 즉시 응답 (Slack 3초 제한 회피)
-        immediate_response = (
-            f"*{chiikawa_msg}*\n\n"  # 🐹 치이카와!
+        # 🐹 치이카와: 배포 요청 시작 (✨ 수정됨)
+        dialog_key = 'deploy_request'
+        dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+        chiikawa_text = dialog.get('text', '배포 요청을 처리 중입니다...')
+        chiikawa_image = dialog.get('image')
+
+        details_mrkdwn = (
             "⏳ *배포 요청을 처리 중입니다...*\n"
             f"• 요청자: <@{user_id}>\n"
             f"• 메시지: `{command_text}`\n"
             f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n\n"
             "_잠시 후 결과를 알려드리겠습니다..._"
         )
+        
+        # ✨ 수정됨: 즉시 응답을 Block Kit으로 구성
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}
+            },
+            {
+                "type": "image",
+                "image_url": chiikawa_image,
+                "alt_text": "Deploy Request"
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": details_mrkdwn}
+            }
+        ]
         
         # 자기 자신을 비동기로 재호출 시도
         async_payload = {
@@ -816,15 +1017,23 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
         
         if not async_success:
             logger.warning("⚠️ 비동기 호출 실패, 동기 처리로 폴백")
+            # 동기 호출 시에는 이 함수가 응답을 보내므로,
+            # 여기서는 즉각적인 응답을 보낼 필요가 없습니다.
             trigger_github_deployment_async(command_text, user_id, channel_id, response_url)
+            # 동기 응답은 이미 전송되었으므로, Slack에 200 OK만 반환
+            return {'ok': True, 'message': None} # message: None은 응답 안 함
         
-        return {'ok': True, 'message': immediate_response}
+        # 비동기 호출 성공 시, 블록으로 즉시 응답
+        return {'ok': True, 'message': "배포 요청 처리 중...", 'blocks': blocks}
     
     elif command == '/platform-deploy-approve':
-        return handle_deploy_approve_command(command_text, user_id, channel_id, response_url)
+        # 이 함수는 직접 send_slack_message_with_blocks를 호출합니다.
+        result = handle_deploy_approve_command(command_text, user_id, channel_id, response_url)
+        # Slack에는 텍스트만 즉시 응답합니다.
+        return {'ok': result['ok'], 'message': result['message']}
 
     elif command == '/platform-status':
-        return handle_status_command()
+        return handle_status_command() # 이 함수는 'blocks'를 포함한 dict 반환
     
     elif command == '/platform-rollback':
         if ROLLBACK_APPROVAL_REQUIRED:
@@ -840,10 +1049,13 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
                 },
             )
             return {'ok': True, 'message': approval_text}
-        return handle_rollback_command(user_id)
+        return handle_rollback_command(user_id) # 이 함수는 'blocks'를 포함한 dict 반환
 
     elif command == '/platform-images':
-        return handle_container_list_command(channel_id, response_url)
+        result = handle_container_list_command(channel_id, response_url)
+        # 이 함수는 반환된 블록을 즉시 응답으로 사용합니다.
+        # (참고: /platform-images는 메시지가 길어질 수 있어 비동기 처리가 더 낫습니다)
+        return result
     
     else:
         return {'ok': False, 'message': f"❌ 알 수 없는 명령어: {command}"}
@@ -874,9 +1086,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     requested_by=event['requested_by'],
                     approved_by=event.get('approved_by'),
                 )
-                send_slack_message(
+                # ✨ 수정됨: 롤백 결과가 블록일 수 있으므로 send_slack_message_with_blocks 사용
+                send_slack_message_with_blocks(
                     channel=event['channel_id'],
                     text=result['message'],
+                    blocks=result.get('blocks'), # 블록이 있으면 블록 전송
                     response_url=event.get('response_url')
                 )
                 return {'statusCode': 200, 'body': json.dumps({'message': 'Rollback task completed'})}
@@ -903,10 +1117,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Slash Command 처리
             if 'command' in payload:
                 result = handle_slash_command(payload, context)
+                
+                # ✨ 수정됨: handle_slash_command가 'blocks'를 반환하면 사용
+                if result.get('message') is None: # 동기 처리 완료, 응답 없음
+                    return {'statusCode': 200}
+                
+                response_body = {'text': result['message']}
+                if 'blocks' in result:
+                    response_body['blocks'] = result['blocks']
+                    # 블록이 있을 경우, 텍스트는 알림용 Fallback으로만 사용됨
+                    response_body['text'] = result.get('message', 'Slack 응답') 
+                
                 return {
                     'statusCode': 200,
                     'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'text': result['message']})
+                    'body': json.dumps(response_body)
                 }
             
             # Interactive 버튼 처리
@@ -942,20 +1167,39 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 function_name = context.function_name if context else os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
                 
                 if action_id == 'approve_deploy':
-                    # 🐹 치이카와: 배포 승인됨
-                    chiikawa_msg = CHIIKAWA_DIALOGS['deploy_approved']
+                    # 🐹 치이카와: 배포 승인됨 (✨ 수정됨)
+                    dialog_key = 'deploy_approved'
+                    dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+                    chiikawa_text = dialog.get('text', '배포가 승인되었습니다!')
+                    chiikawa_image = dialog.get('image')
+
+                    # 원본 메시지를 치이카와 이미지로 업데이트
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}
+                        },
+                        {
+                            "type": "image",
+                            "image_url": chiikawa_image,
+                            "alt_text": "Deploy Approved"
+                        },
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"✅ <@{approver_id}> 님이 배포를 승인했습니다. 🚀\n• 요청자: <@{requested_by}>"}
+                        }
+                    ]
                     
                     send_slack_message_with_blocks(
                         channel=channel_id,
-                        text=f"*{chiikawa_msg}*\n\n✅ <@{approver_id}> 님이 배포를 승인했습니다.",
-                        blocks=None,
+                        text="✅ 배포 승인됨",
+                        blocks=blocks,
                         response_url=response_url,
-                        replace_original=True,
+                        replace_original=True, # 원본 메시지 교체
                     )
-                    send_slack_message(
-                        channel_id,
-                        f"*{chiikawa_msg}*\n\n🚀 *배포 승인 완료*\n• 요청자: <@{requested_by}>\n• 승인자: <@{approver_id}>\n• 명령: `{command_text}`"
-                    )
+                    
+                    # (기존 코드의 중복 send_slack_message 제거)
+                    
                     publish_metric('ApprovalGranted', dimensions={'Action': 'deploy'})
                     log_event(
                         'approval.granted',
@@ -983,6 +1227,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 if action_id == 'reject_deploy':
+                    # (이 부분은 치이카와 이미지가 없었으므로 기존 로직 유지)
                     send_slack_message_with_blocks(
                         channel=channel_id,
                         text=f"❌ <@{approver_id}> 님이 배포를 거절했습니다.",
@@ -998,10 +1243,32 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 if action_id == 'approve_rollback':
+                    # 🐹 치이카와: 롤백 시작 (✨ 수정됨)
+                    dialog_key = 'rollback_start' # 롤백 시작 이미지 사용
+                    dialog = CHIIKAWA_DIALOGS.get(dialog_key, {})
+                    chiikawa_text = dialog.get('text', '롤백이 승인되었습니다!')
+                    chiikawa_image = dialog.get('image')
+
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{chiikawa_text}*"}
+                        },
+                        {
+                            "type": "image",
+                            "image_url": chiikawa_image,
+                            "alt_text": "Rollback Approved"
+                        },
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"✅ <@{approver_id}> 님이 롤백을 승인했습니다. 롤백을 시작합니다..."}
+                        }
+                    ]
+
                     send_slack_message_with_blocks(
                         channel=channel_id,
                         text=f"✅ <@{approver_id}> 님이 롤백을 승인했습니다.",
-                        blocks=None,
+                        blocks=blocks,
                         response_url=response_url,
                         replace_original=True,
                     )
@@ -1018,7 +1285,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         invoke_async_lambda(function_name, async_payload)
                     else:
                         result = execute_codeploy_rollback(requested_by=requested_by, approved_by=approver_id)
-                        send_slack_message(channel_id, result['message'], decoded_value.get('response_url', response_url))
+                        # ✨ 수정됨: 롤백 결과 블록 전송
+                        send_slack_message_with_blocks(
+                            channel_id,
+                            result['message'],
+                            result.get('blocks'),
+                            decoded_value.get('response_url', response_url)
+                        )
                     return {'statusCode': 200, 'body': json.dumps({'ok': True})}
                 
                 if action_id == 'reject_rollback':
