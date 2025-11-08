@@ -43,6 +43,10 @@ Slack Events API → API Gateway → AWS Lambda → GitHub API → GitHub Action
 | `GITHUB_REPO`                  | `watermelon_bot_test`                                       | 선택 |
 | `ECS_CLUSTER_NAME`             | ECS 클러스터명 (상태 조회용)                                | 선택 |
 | `ECS_SERVICE_NAME`             | ECS 서비스명 (상태 조회용)                                  | 선택 |
+| `GIF_BASE_URL`                 | GIF 이미지 기본 URL (예: `https://example.com/gifs`)       | 선택 |
+| `GIF_DEPLOYING`                | 배포 시작 GIF URL (기본값: `{GIF_BASE_URL}/deploying.gif`) | 선택 |
+| `GIF_DEPLOY_SUCCESS`           | 배포 성공 GIF URL (기본값: `{GIF_BASE_URL}/deploy_complete.gif`) | 선택 |
+| `GIF_DEPLOY_FAIL`              | 배포 실패 GIF URL (기본값: `{GIF_BASE_URL}/failed.gif`)    | 선택 |
 
 ### GitHub Secrets 설정
 

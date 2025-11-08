@@ -43,6 +43,12 @@ CODEDEPLOY_APP_NAME = os.environ.get('CODEDEPLOY_APP_NAME', 'atlas-codedeploy-ap
 CODEDEPLOY_GROUP_NAME = os.environ.get('CODEDEPLOY_GROUP_NAME', 'atlas-codedeploy-group')
 MONITORING_METRIC_NAMESPACE = os.environ.get('MONITORING_METRIC_NAMESPACE', '')
 
+# GIF 이미지 URL (배포 관련)
+GIF_BASE_URL = os.environ.get('GIF_BASE_URL', '').rstrip('/')
+GIF_DEPLOYING = os.environ.get('GIF_DEPLOYING', f'{GIF_BASE_URL}/deploying.gif' if GIF_BASE_URL else '')
+GIF_DEPLOY_SUCCESS = os.environ.get('GIF_DEPLOY_SUCCESS', f'{GIF_BASE_URL}/deploy_complete.gif' if GIF_BASE_URL else '')
+GIF_DEPLOY_FAIL = os.environ.get('GIF_DEPLOY_FAIL', f'{GIF_BASE_URL}/failed.gif' if GIF_BASE_URL else '')
+
 _TRUE_VALUES = {'1', 'true', 'yes', 'on'}
 DEPLOY_APPROVAL_REQUIRED = os.environ.get('DEPLOY_APPROVAL_REQUIRED', 'false').lower() in _TRUE_VALUES
 ROLLBACK_APPROVAL_REQUIRED = os.environ.get('ROLLBACK_APPROVAL_REQUIRED', 'false').lower() in _TRUE_VALUES
@@ -146,6 +152,15 @@ def send_slack_message(channel: str, text: str, response_url: str = None) -> boo
         return False
 
 
+def create_image_block(image_url: str, alt_text: str = "Image") -> Dict[str, Any]:
+    """이미지 블록 생성 헬퍼"""
+    return {
+        'type': 'image',
+        'image_url': image_url,
+        'alt_text': alt_text,
+    }
+
+
 def send_slack_message_with_blocks(
     channel: str,
     text: str,
@@ -153,8 +168,15 @@ def send_slack_message_with_blocks(
     response_url: str = None,
     replace_original: bool = False,
     ephemeral: bool = False,
+    image_url: Optional[str] = None,
 ) -> bool:
     """블록(버튼) 메시지 전송 헬퍼"""
+    # 이미지 URL이 제공되면 블록에 추가
+    if image_url and blocks is not None:
+        blocks = [create_image_block(image_url)] + blocks
+    elif image_url:
+        blocks = [create_image_block(image_url)]
+    
     if response_url:
         try:
             payload: Dict[str, Any] = {
@@ -404,7 +426,17 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"  https://github.com/{GITHUB_ID}/{GITHUB_REPO}/actions"
             )
             logger.info("✅✅✅ GitHub dispatch 성공!")
-            send_slack_message(channel_id, success_msg, response_url)
+            # GIF 이미지와 함께 메시지 전송
+            if GIF_DEPLOY_SUCCESS:
+                send_slack_message_with_blocks(
+                    channel=channel_id,
+                    text=success_msg,
+                    blocks=None,
+                    response_url=response_url,
+                    image_url=GIF_DEPLOY_SUCCESS,
+                )
+            else:
+                send_slack_message(channel_id, success_msg, response_url)
             log_event(
                 'github.dispatch.success',
                 repository=f"{GITHUB_ID}/{GITHUB_REPO}",
@@ -426,7 +458,16 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"3. Lambda 환경변수 `GITHUB_PERSONAL_ACCESS_TOKEN` 재확인"
             )
             logger.error(f"❌ 401 Unauthorized: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
+            if GIF_DEPLOY_FAIL:
+                send_slack_message_with_blocks(
+                    channel=channel_id,
+                    text=error_msg,
+                    blocks=None,
+                    response_url=response_url,
+                    image_url=GIF_DEPLOY_FAIL,
+                )
+            else:
+                send_slack_message(channel_id, error_msg, response_url)
             log_event(
                 'github.dispatch.failed',
                 level='error',
@@ -450,7 +491,16 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"3. Repository가 Public인지 Private인지 확인"
             )
             logger.error(f"❌ 404 Not Found: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
+            if GIF_DEPLOY_FAIL:
+                send_slack_message_with_blocks(
+                    channel=channel_id,
+                    text=error_msg,
+                    blocks=None,
+                    response_url=response_url,
+                    image_url=GIF_DEPLOY_FAIL,
+                )
+            else:
+                send_slack_message(channel_id, error_msg, response_url)
             log_event(
                 'github.dispatch.failed',
                 level='error',
@@ -470,7 +520,16 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"2. Token을 재생성하고 Lambda 환경변수 업데이트"
             )
             logger.error(f"❌ 403 Forbidden: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
+            if GIF_DEPLOY_FAIL:
+                send_slack_message_with_blocks(
+                    channel=channel_id,
+                    text=error_msg,
+                    blocks=None,
+                    response_url=response_url,
+                    image_url=GIF_DEPLOY_FAIL,
+                )
+            else:
+                send_slack_message(channel_id, error_msg, response_url)
             log_event(
                 'github.dispatch.failed',
                 level='error',
@@ -489,7 +548,16 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
                 f"• URL: `{url}`"
             )
             logger.error(f"❌ Unexpected status {response.status_code}: {response.text}")
-            send_slack_message(channel_id, error_msg, response_url)
+            if GIF_DEPLOY_FAIL:
+                send_slack_message_with_blocks(
+                    channel=channel_id,
+                    text=error_msg,
+                    blocks=None,
+                    response_url=response_url,
+                    image_url=GIF_DEPLOY_FAIL,
+                )
+            else:
+                send_slack_message(channel_id, error_msg, response_url)
             log_event(
                 'github.dispatch.failed',
                 level='error',
@@ -502,14 +570,32 @@ def trigger_github_deployment_async(command_text: str, user_id: str, channel_id:
     except requests.exceptions.Timeout:
         error_msg = "❌ *GitHub API 타임아웃* (15초 초과)"
         logger.error(error_msg)
-        send_slack_message(channel_id, error_msg, response_url)
+        if GIF_DEPLOY_FAIL:
+            send_slack_message_with_blocks(
+                channel=channel_id,
+                text=error_msg,
+                blocks=None,
+                response_url=response_url,
+                image_url=GIF_DEPLOY_FAIL,
+            )
+        else:
+            send_slack_message(channel_id, error_msg, response_url)
         log_event('github.dispatch.failed', level='error', status='timeout')
         publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': 'timeout'})
     
     except Exception as e:
         error_msg = f"❌ *Lambda 내부 오류*\n```{str(e)}```"
         logger.exception(f"💥 Exception: {e}")
-        send_slack_message(channel_id, error_msg, response_url)
+        if GIF_DEPLOY_FAIL:
+            send_slack_message_with_blocks(
+                channel=channel_id,
+                text=error_msg,
+                blocks=None,
+                response_url=response_url,
+                image_url=GIF_DEPLOY_FAIL,
+            )
+        else:
+            send_slack_message(channel_id, error_msg, response_url)
         log_event('github.dispatch.failed', level='error', status='exception', error=str(e))
         publish_metric('DeployDispatchFailure', dimensions={'Repository': GITHUB_REPO, 'Reason': 'exception'})
 
@@ -743,6 +829,16 @@ def handle_slash_command(payload: Dict[str, Any], context: Any) -> Dict[str, Any
             f"• Repository: `{GITHUB_ID}/{GITHUB_REPO}`\n\n"
             "_잠시 후 결과를 알려드리겠습니다..._"
         )
+        
+        # 배포 시작 GIF 이미지와 함께 즉시 응답
+        if GIF_DEPLOYING:
+            send_slack_message_with_blocks(
+                channel=channel_id,
+                text=immediate_response,
+                blocks=None,
+                response_url=response_url,
+                image_url=GIF_DEPLOYING,
+            )
         
         # 자기 자신을 비동기로 재호출 시도 (GitHub API 호출용)
         async_payload = {
