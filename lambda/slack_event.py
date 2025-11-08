@@ -596,6 +596,8 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
             "✅ *CodeDeploy 배포 승인 완료*\n"
             f"• Deployment ID: `{deployment_id}`\n"
             f"• 승인자: <@{approver_id}>"
+            "• 배포 결과를 확인하세요!"
+            "• http://demo-backend-test-486938261.ap-northeast-2.elb.amazonaws.com"
         )
         send_slack_message(channel_id, message, response_url)
         return {'ok': True, 'message': message}
