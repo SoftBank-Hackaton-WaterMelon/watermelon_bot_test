@@ -63,7 +63,7 @@ SLACK_APPROVER_IDS = {
 
 CHIIKAWA_DIALOGS = {
     'approval_request': {
-        'text': '새 버전 배포 요청이 도착했어요. 승인해주실래요?\n 「新しいバージョンのデプロ이リクエストが届きました！承認してくれますか？」',
+        'text': '새 버전 배포 요청이 도착했어요. 승인해주실래요?\n 「新しいバージョンのデプロイリクエストが届きました！承認してくれますか？」',
         'image': 'https://github.com/SoftBank-Hackaton-WaterMelon/Chiikawa/blob/main/rollback_success.gif?raw=true'
     },
     'deploy_start': {
