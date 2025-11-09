@@ -714,7 +714,9 @@ def handle_deploy_approve_command(command_text: str, approver_id: str, channel_i
             "✅ *CodeDeploy 배포 승인 완료*\n"
             f"• Deployment ID: `{deployment_id}`\n"
             f"• 승인자: <@{approver_id}>\n"
-            "• 서비스가 새 버전으로 업데이트되었습니다."
+            "• 서비스가 새 버전으로 업데이트되었습니다.\n"
+            "• 아래 링크에서 확인해보세요!:\n"
+            "• http://demo-backend-test-486938261.ap-northeast-2.elb.amazonaws.com/"
         )
         
         blocks = [
